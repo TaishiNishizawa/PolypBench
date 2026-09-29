@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polypbench"
+version = "0.1.0"
+description = "Benchmarking image and video polyp segmentation models"
+requires-python = ">=3.10"
+dependencies = []   # managed in environment.yml (conda-forge)
+
+[tool.setuptools.packages.find]
+where = ["src"]

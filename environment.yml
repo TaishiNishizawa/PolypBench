@@ -1,0 +1,13 @@
+name: polypbench
+channels:
+  - conda-forge
+  - nodefaults       
+dependencies:
+  - python=3.10
+  - numpy
+  - opencv
+  - pyyaml
+  - pandas
+  - pip
+  - pip:
+      - onnxruntime-gpu

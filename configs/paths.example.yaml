@@ -1,0 +1,3 @@
+# Copy to paths.yaml and edit for this machine (paths.yaml is gitignored).
+data_root: /path/to/data
+artifacts_root: ../artifacts   # relative paths resolve against the repo root
