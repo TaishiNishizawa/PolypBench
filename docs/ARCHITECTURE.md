@@ -189,8 +189,6 @@ hardcodes a path. Dataset configs give their `root` relative to `data_root`.
   - `frame70` belongs to `second_polyp_removed` at frame 105, not to
     `second_polyp_seen`. As a result, `second_polyp_seen` has 30 annotations
     (no annotation at frame 105) and the other three clips have 31 each.
-  - `frame53` is `first_polyp_removed` frame 315. The old flow-based matcher
-    in LambdaDiceEval never matched it.
 - `scripts/build_inhouse_manifest.py` generates the annotation mapping by
   pixel-matching each annotation against the video and fails if any match is
   poor. Regenerate the config with that script; don't edit the annotation
