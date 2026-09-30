@@ -75,7 +75,7 @@ A benchmark config is the definition of one results table:
 ```yaml
 name: inhouse
 datasets: [inhouse]
-models: [emcad@colondb, mkunet@colondb, pvt-cascade@colondb, sacnet-b0@colondb, sacnet-b2@colondb, sali@sunseg]
+models: [emcad@colondb, mkunet@colondb, pvt-cascade@colondb, sacnet-b2@colondb, sali@sunseg]
 postprocs: [none, temporal_smooth]
 metrics: [dice, iou, interframe_iou]
 profile: true
@@ -86,7 +86,7 @@ profile: true
 ```
 configs/benchmarks/X.yaml
    ├─► scripts/predict.py   dataset × model × postproc  ─► artifacts/predictions/…/*.png
-   ├─► scripts/evaluate.py  predictions + ground truth  ─► artifacts/metrics/…/*.parquet
+   ├─► scripts/evaluate.py  predictions + ground truth  ─► artifacts/metrics/…/*.csv
    ├─► scripts/profile.py   model × device              ─► artifacts/profiles/…/*.json
    └─► scripts/report.py    joins the above             ─► artifacts/reports/X/
 
