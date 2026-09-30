@@ -1,0 +1,12 @@
+# Flow-warped EMA smoothing + area fallback, ported from
+# LambdaDiceEval/infer_dice_eval.py (TEMPORAL_SMOOTHING, USE_ADAPTIVE_ALPHA,
+# USE_SCENE_RESET, USE_OPTICAL_FLOW, USE_AREA_FALLBACK all True there).
+name: temporal_smooth
+alpha_high: 0.85        # weight on the previous frame when motion is low
+alpha_med: 0.65
+alpha_low: 0.35
+diff_low: 0.03          # mean abs gray diff between frames, in [0, 1]
+diff_med: 0.08
+diff_reset: 0.12        # above this, treat as a scene cut: no smoothing
+area_fallback_ratio: 0.15
+area_threshold: 0.7     # threshold used only to measure mask area for the fallback

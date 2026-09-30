@@ -1,0 +1,12 @@
+model_id: emcad@colondb
+arch: emcad
+backend: onnx
+weights: checkpoints/emcad@colondb/model.onnx   # relative to artifacts_root
+source: >-
+  ONNX export of a model trained on ColonDB for 200 epochs by a previous
+  master's student (copied from LambdaDiceEval/models/emcad_new.onnx).
+input_size: 352
+input_channels: 3          # RGB input
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+output_index: 0          # single output (logits)

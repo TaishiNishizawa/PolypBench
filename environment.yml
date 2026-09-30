@@ -1,13 +1,13 @@
 name: polypbench
 channels:
   - conda-forge
-  - nodefaults       
+  - nodefaults
 dependencies:
   - python=3.10
   - numpy
   - opencv
   - pyyaml
   - pandas
+  - onnxruntime=*=*cuda*   # CUDA build; pulls matching CUDA/cuDNN libs from conda-forge
+  - pytest
   - pip
-  - pip:
-      - onnxruntime-gpu
