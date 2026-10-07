@@ -1,0 +1,19 @@
+model_id: sali@sunseg
+arch: sali
+backend: external          # runs in its own env: conda activate sali; python scripts/predict_sali.py
+env: envs/sali.yml
+code: third_party/SALI     # submodule, pinned to our fork (PyTorch 2 build fix)
+weights: checkpoints/sali@sunseg/Net_epoch_8_best.pth   # relative to artifacts_root
+weights_sha256: cc82556a4d77a6c6f80bf86166e6f1506ea06f8093fcf93cbaa2ad72cbbb6efb
+source: >-
+  Official SALI checkpoint (PVTv2-b5 backbone) trained on SUN-SEG by the
+  authors (MICCAI 2024), from the link in the SALI README.
+input_size: 352
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+mem_freq: 5                # add to the long-term memory bank every 5 frames (SALI default)
+notes: >-
+  Video model: each frame is segmented using the NEXT frame (the last frame
+  uses the previous one) plus a memory bank of earlier frames, so it is not
+  causal. Saved outputs are the raw sigmoid, without SALI's per-frame min-max
+  rescaling.

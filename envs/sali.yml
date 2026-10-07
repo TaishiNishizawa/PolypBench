@@ -37,5 +37,6 @@ dependencies:
   - tensorboardx
   # polypbench's own runtime deps (to save predictions in the standard layout)
   - pandas
+  - prettytable                  # SALI/PNS+ evaluation toolbox (third_party/SALI/eval)
   - gdown                        # downloading checkpoints from Google Drive
   - pip

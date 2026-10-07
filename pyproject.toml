@@ -11,3 +11,6 @@ dependencies = []   # managed in environment.yml (conda-forge)
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]   # don't collect third_party/ (e.g. SALI's test_video.py is a script, not a test)

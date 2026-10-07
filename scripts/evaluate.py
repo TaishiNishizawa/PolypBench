@@ -9,6 +9,8 @@ empty-ground-truth frames are handled). Writes:
     <artifacts>/reports/<dataset>/<metric>_by_clip.csv         one table per metric: rows = model/postproc, cols = clips + ALL
 
 "ALL" pools every annotated frame across clips (not the mean of the clip means).
+The summary tables cover every per-frame file saved at --threshold, including
+models and postprocs not scored in this run.
 
 Usage:
     python scripts/evaluate.py --dataset inhouse --models all
@@ -77,8 +79,18 @@ def main():
             out = metrics_dir / model_id / f"{postproc}.csv"
             out.parent.mkdir(parents=True, exist_ok=True)
             frames.to_csv(out, index=False)
-            all_frames.append(frames)
             print(f"[scored] {model_id} / {postproc} -> {out}")
+
+    # Summarize every saved per-frame file at this threshold, not just the runs
+    # scored above, so a partial rerun doesn't drop other models from the tables.
+    all_frames = []
+    for path in sorted(metrics_dir.glob("*/*.csv")):
+        frames = pd.read_csv(path)
+        if (frames.threshold == args.threshold).all():
+            all_frames.append(frames)
+        else:
+            print(f"[not in summary] {path.relative_to(metrics_dir)}: scored at threshold "
+                  f"{frames.threshold.iloc[0]}, not {args.threshold}")
     if not all_frames:
         return
 

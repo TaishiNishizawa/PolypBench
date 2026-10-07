@@ -17,7 +17,8 @@ covers what exists and how to use it.
 | Inference for our lab's 4 models (ONNX) | done, checked against LambdaDiceEval |
 | Per-frame / per-clip evaluation | done |
 | Overlay videos + comparison sheets | done |
-| SOTA models (SALI first) | next |
+| SALI (SOTA video model) | done on in-house; SUN-SEG reproduction in progress |
+| More SOTA models | next |
 | Temporal stability metrics + plots | planned (ported from LambdaDiceEval) |
 | SUN-SEG dataset | planned |
 | Training | planned |
@@ -51,6 +52,8 @@ previous step's saved output, so you only rerun what changed.
 ```bash
 # 1. Run models over the dataset, saving a probability map for every frame  (~2 min per model)
 python scripts/predict.py --dataset inhouse --models all
+#    SALI runs in its own env (external model; predict.py skips it):
+conda activate sali && python scripts/predict_sali.py --dataset inhouse && conda activate polypbench
 
 # 2. Score the predictions: per-frame CSVs + per-clip summary tables  (seconds)
 python scripts/evaluate.py --dataset inhouse --models all
@@ -103,6 +106,25 @@ python scripts/build_inhouse_manifest.py
 # Build the official SUN-SEG layout from the raw downloads (hard links; safe to rerun)
 python scripts/build_sunseg.py
 ```
+
+### SUN-SEG benchmark numbers (standard toolbox)
+
+SUN-SEG papers report S-α, mean E-φ, weighted F, mean F, mean sensitivity and
+max Dice from the PNS+ evaluation toolbox (copy in `third_party/SALI/eval`).
+`eval_sunseg_toolbox.py` runs that toolbox unchanged, but scores clips in
+parallel (minutes instead of hours). Run it in the `sali` env:
+
+```bash
+conda activate sali
+python scripts/eval_sunseg_toolbox.py --model_id sali@sunseg \
+    --pred_dir third_party/SALI/res/Net_epoch_8_best/SUN-SEG     # contains <split>/<clip>/*.png
+# -> artifacts/reports/sunseg/toolbox/<model_id>/<split>_eval.txt
+```
+
+Predictions must follow the SUN-SEG convention: per-frame min-max normalized
+PNGs at `<pred_dir>/<split>/<clip>/<frame>.png`. SALI's reproduction on
+Easy/Seen matches its paper (94.4 / 97.3 / 91.1 / 92.5 / 92.4 / 92.7, against
+94.4 / 97.2 / 91.0 / 92.5 / 92.4 / 92.7).
 
 ## Repository layout
 
@@ -207,12 +229,17 @@ video is read **sequentially** (never by seeking).
 | `mkunet@colondb` | RGB 352×352 | same |
 | `pvt-cascade@colondb` | RGB 352×352 | same |
 | `sacnet-b2@colondb` | RGB 352×352 | same |
+| `sali@sunseg` | RGB 352×352, current + next frame + memory | official SUN-SEG checkpoint (MICCAI 2024); runs in `envs/sali.yml` via `scripts/predict_sali.py` |
 
 Model ids follow `arch-size@trainset[-tag]`; the training set is always part of
 the name. Training code for each model is in `../../repo_clones/`
 (`train_polyp.py` in EMCAD, MK-UNet, CASCADE and SACNet).
 
 SACNet-b0 was dropped: its only available ONNX export is broken (Dice ≈ 0.02).
+
+SALI is not causal: it uses the next frame to segment the current one. Its
+saved outputs are the raw sigmoid, not its own per-frame min-max rescaling.
+`scripts/predict_sali.py` reproduces SALI's `test_video.py` outputs exactly.
 
 **To add an ONNX model:** put the weights at
 `artifacts/checkpoints/<model_id>/model.onnx`, copy one of
@@ -269,8 +296,8 @@ differences:
 
 ## Next steps
 
-1. SALI: clone it, set up `envs/sali.yml`, and write predictions in the
-   standard layout.
+1. Finish reproducing SALI's published SUN-SEG numbers with the PNS+
+   evaluation toolbox (`third_party/SALI/eval`).
 2. `--name` option for sheets, so subset comparisons don't overwrite the full
    sheet.
 3. Temporal stability metrics and plots (interframe IoU, side-by-side video).

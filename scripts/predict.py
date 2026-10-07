@@ -89,6 +89,9 @@ def main():
 
     dataset = load_dataset(args.dataset)
     for model_id in model_ids:
+        if load_model_config(model_id)["backend"] == "external":
+            print(f"[skip] {model_id}: external model, run its own script (see its config)")
+            continue
         run_model(dataset, model_id, args.postprocs, args.overwrite)
 
 
