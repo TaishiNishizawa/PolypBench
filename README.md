@@ -99,6 +99,9 @@ with a subset of `--models` overwrites the full sheet.
 ```bash
 # Regenerate configs/datasets/inhouse.yaml (only if the annotations change)
 python scripts/build_inhouse_manifest.py
+
+# Build the official SUN-SEG layout from the raw downloads (hard links; safe to rerun)
+python scripts/build_sunseg.py
 ```
 
 ## Repository layout
@@ -173,6 +176,25 @@ Colors: **green** = prediction, **red** = ground truth.
 - **14 masks are empty** (no polyp in view after removal): `first_polyp_removed`
   frames 330 and 345, and `second_polyp_removed` frames 255 and 300–450. These
   are scored separately (see below).
+
+### SUN-SEG (`/home/tn23794/data/SUN-SEG/`)
+
+- Raw downloads: `SUN-Positive/` (49,136 polyp frames), `SUN-Negative/`
+  (13 polyp-free videos, 109,554 frames), and
+  `SUN-SEG-Annotation/SUN-SEG-Annotation/` (masks + splits, the 2022 version).
+- `scripts/build_sunseg.py` builds the official layout in `SUN-SEG/SUN-SEG/`,
+  using the same mapping as PNS+'s `reorganize.py`. Files are hard-linked, not
+  moved, so it uses no extra space and leaves the raw folders untouched:
+
+  | Split | Clips | Frames |
+  |---|---|---|
+  | TrainDataset | 112 | 19,544 |
+  | TestEasyDataset/Seen | 33 | 4,719 |
+  | TestEasyDataset/Unseen | 86 | 12,351 |
+  | TestHardDataset/Seen | 17 | 3,882 |
+  | TestHardDataset/Unseen | 37 | 8,640 |
+
+- No SUN-SEG mask is empty: every annotated frame contains a polyp.
 
 Conventions in code: frame indices are **0-based**, frames are **RGB**, and
 video is read **sequentially** (never by seeking).
