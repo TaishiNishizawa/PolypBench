@@ -1,0 +1,41 @@
+# Environment for SALI (third_party/SALI): modern PyTorch from conda-forge plus
+# the CUDA compiler and headers needed to build SALI's deformable-conv
+# extension (lib/ops_align). Python 3.10 so polypbench itself installs too.
+#
+#   conda env create -f envs/sali.yml
+#   conda activate sali
+#   pip install -e . --no-deps                                 # polypbench
+#   (cd third_party/SALI/lib/ops_align && python setup.py build_ext --inplace)
+name: sali
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.10
+  - cuda-version=12.9            # must match the CUDA version pytorch was built with
+  - pytorch=2.9.*=cuda*
+  - torchvision
+  # building the CUDA extension
+  - cuda-nvcc
+  - cuda-cudart-dev
+  - libcublas-dev
+  - libcusparse-dev
+  - libcusolver-dev
+  - libcurand-dev
+  - cxx-compiler
+  - ninja
+  # SALI's requirements.txt (timm pinned by SALI; the rest are only used by training/utils)
+  - timm=0.5.4
+  - numpy
+  - opencv
+  - pillow
+  - scipy
+  - scikit-image
+  - imageio
+  - tqdm
+  - pyyaml
+  - tensorboardx
+  # polypbench's own runtime deps (to save predictions in the standard layout)
+  - pandas
+  - gdown                        # downloading checkpoints from Google Drive
+  - pip
