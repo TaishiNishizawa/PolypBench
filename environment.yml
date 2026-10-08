@@ -8,6 +8,7 @@ dependencies:
   - opencv
   - pyyaml
   - pandas
+  - matplotlib-base
   - onnxruntime=*=*cuda*   # CUDA build; pulls matching CUDA/cuDNN libs from conda-forge
   - pytest
   - pip

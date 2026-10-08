@@ -17,9 +17,9 @@ covers what exists and how to use it.
 | Inference for our lab's 4 models (ONNX) | done, checked against LambdaDiceEval |
 | Per-frame / per-clip evaluation | done |
 | Overlay videos + comparison sheets | done |
-| SALI (SOTA video model) | done on in-house; SUN-SEG reproduction in progress |
+| SALI (SOTA video model) | done: in-house + SUN-SEG paper numbers reproduced |
 | More SOTA models | next |
-| Temporal stability metrics + plots | planned (ported from LambdaDiceEval) |
+| Temporal stability metrics + plots | done (ported from LambdaDiceEval) |
 | SUN-SEG dataset | planned |
 | Training | planned |
 
@@ -60,6 +60,12 @@ python scripts/evaluate.py --dataset inhouse --models all
 
 # 3. Draw comparison sheets (PNG) and overlay videos  (~2 min)
 python scripts/visualize.py --dataset inhouse --models all
+
+# 4. Inter-frame stability from the saved predictions: CSVs + per-clip tables  (~5-10 min)
+python scripts/stability.py --dataset inhouse --models all
+
+# 5. Stability graphs + side-by-side videos  (~15 min; --no-videos for graphs only)
+python scripts/visualize_stability.py --dataset inhouse --models all
 
 # Tests
 pytest -v
@@ -122,9 +128,16 @@ python scripts/eval_sunseg_toolbox.py --model_id sali@sunseg \
 ```
 
 Predictions must follow the SUN-SEG convention: per-frame min-max normalized
-PNGs at `<pred_dir>/<split>/<clip>/<frame>.png`. SALI's reproduction on
-Easy/Seen matches its paper (94.4 / 97.3 / 91.1 / 92.5 / 92.4 / 92.7, against
-94.4 / 97.2 / 91.0 / 92.5 / 92.4 / 92.7).
+PNGs at `<pred_dir>/<split>/<clip>/<frame>.png`.
+
+SALI reproduction (our run vs. the paper's Table 1, in %), all within 0.1:
+
+| Split | S-α | mean E-φ | weighted F | mean F | Sen | Dice |
+|---|---|---|---|---|---|---|
+| Easy/Seen | 94.4 (94.4) | 97.3 (97.2) | 91.1 (91.0) | 92.5 (92.5) | 92.4 (92.4) | 92.7 (92.7) |
+| Hard/Seen | 91.6 (91.6) | 95.2 (95.2) | 86.5 (86.5) | 88.9 (88.9) | 89.8 (89.8) | 89.1 (89.1) |
+| Easy/Unseen | 87.0 (87.0) | 92.0 (92.0) | 79.5 (79.4) | 83.1 (83.1) | 81.2 (81.1) | 82.6 (82.5) |
+| Hard/Unseen | 87.4 (87.4) | 92.0 (92.0) | 79.0 (79.0) | 82.2 (82.2) | 83.1 (83.0) | 82.3 (82.2) |
 
 ## Repository layout
 
@@ -173,13 +186,20 @@ artifacts/
 │   ├── run.json                               config, git commit, device, timestamps
 │   └── <clip>/000000.png ...                  one probability map per frame (0-255 = 0-1)
 ├── metrics/<dataset>/<model_id>/<postproc>.csv   one row per annotated frame x metric
+├── stability/<dataset>/<model_id>/<postproc>.csv one row per frame transition (k-1 -> k)
 └── reports/<dataset>/
     ├── dice_by_clip.csv                       rows: model/postproc; cols: clips + ALL
     ├── iou_ / precision_ / recall_by_clip.csv
     ├── false_alarm_ / fp_area_frac_by_clip.csv   frames without a polyp
     ├── summary.csv                            mean, std, n for every model/postproc/clip/metric
     ├── sheets/<postproc>/<clip>.png           rows: annotated frames; cols: source, GT, each model
-    └── videos/<postproc>/<model_id>/<clip>.mp4   prediction on every frame; GT + Dice on annotated frames
+    ├── videos/<postproc>/<model_id>/<clip>.mp4   prediction on every frame; GT + Dice on annotated frames
+    └── stability/
+        ├── summary.csv                        per model/postproc/clip (+ ALL): IoU mean/median/p5/min, appear/vanish
+        ├── iou_warped_mean_by_clip.csv        main stability table (also: iou_warped_p5_, iou_raw_mean_, appear_vanish_)
+        └── <postproc>/
+            ├── compare_<clip>.png             every model's motion-compensated IoU on one graph
+            └── <model_id>/<clip>.png, <clip>_side_by_side.mp4
 ```
 
 Colors: **green** = prediction, **red** = ground truth.
@@ -272,6 +292,26 @@ After that, evaluation and visualization work unchanged.
 - Per-clip values are means over that clip's frames. **ALL pools every frame**
   across clips; it is not the average of the four clip means.
 
+### Inter-frame stability
+
+Ported from LambdaDiceEval (`log_interframe_iou.py`, `plot_interframe_iou.py`),
+but computed from the saved predictions of **every frame**, so it covers every
+model and post-processing variant with no extra inference. For each pair of
+consecutive frames, with masks binarized at the same threshold as above:
+
+- `iou_warped` (**main measure**): IoU between the previous mask, warped into
+  the current frame by optical flow, and the current mask. Camera and polyp
+  motion is compensated, so a drop means the model changed its mind.
+- `iou_raw`: the same without motion compensation.
+- `frame_diff`, `flow_mag`, `warp_residual`: how much the frame itself changed,
+  how far it moved, and how much of the change motion doesn't explain.
+- Appear/vanish events: transitions where a mask is present in exactly one of
+  the two frames.
+
+IoU is undefined (NaN) when both masks are empty, and those transitions are
+excluded from the averages. `p5` is the 5th percentile, i.e. how bad the worst
+transitions get.
+
 ## Relation to LambdaDiceEval
 
 `../../LambdaDiceEval/` is the frozen original evaluation. The port reproduces
@@ -296,9 +336,7 @@ differences:
 
 ## Next steps
 
-1. Finish reproducing SALI's published SUN-SEG numbers with the PNS+
-   evaluation toolbox (`third_party/SALI/eval`).
+1. Retrain our lab's models on SUN-SEG (`.pth` checkpoints, optional ONNX
+   export) for a like-for-like comparison with SALI.
 2. `--name` option for sheets, so subset comparisons don't overwrite the full
    sheet.
-3. Temporal stability metrics and plots (interframe IoU, side-by-side video).
-4. SUN-SEG loader and its standard metrics; then training.

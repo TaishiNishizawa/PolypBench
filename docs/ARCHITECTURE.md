@@ -87,6 +87,7 @@ profile: true
 configs/benchmarks/X.yaml
    ├─► scripts/predict.py   dataset × model × postproc  ─► artifacts/predictions/…/*.png
    ├─► scripts/evaluate.py  predictions + ground truth  ─► artifacts/metrics/…/*.csv
+   ├─► scripts/stability.py predictions (every frame)    ─► artifacts/stability/…/*.csv
    ├─► scripts/profile.py   model × device              ─► artifacts/profiles/…/*.json
    └─► scripts/report.py    joins the above             ─► artifacts/reports/X/
 
