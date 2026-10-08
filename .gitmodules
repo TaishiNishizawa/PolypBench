@@ -1,3 +1,12 @@
 [submodule "third_party/SALI"]
 	path = third_party/SALI
 	url = https://github.com/TaishiNishizawa/SALI.git
+[submodule "third_party/EMCAD"]
+	path = third_party/EMCAD
+	url = https://github.com/SLDGroup/EMCAD
+[submodule "third_party/MK-UNet"]
+	path = third_party/MK-UNet
+	url = https://github.com/SLDGroup/MK-UNet
+[submodule "third_party/SACNet"]
+	path = third_party/SACNet
+	url = https://github.com/TaishiNishizawa/SACNet.git
