@@ -44,6 +44,52 @@ For a single run, you can override either one with the environment variables
 After updating `environment.yml`, apply the change with
 `conda env update -f environment.yml`.
 
+Two more envs are needed for SALI and for training (each env file's header
+repeats these steps):
+
+```bash
+# SALI: predict_sali.py, train_sali.py, eval_sunseg_toolbox.py
+conda env create -f envs/sali.yml
+conda activate sali
+pip install -e . --no-deps
+(cd third_party/SALI/lib/ops_align && python setup.py build_ext --inplace)   # rebuild on every new machine
+
+# Our models: train.py, export_onnx.py
+conda env create -f envs/train.yml
+conda activate train
+pip install -e . --no-deps
+```
+
+### Moving to another server
+
+Code goes through git; data and `artifacts/` go through rsync (`-H` keeps the
+SUN-SEG hard links, so the data stays ~67 GB instead of ~90 GB):
+
+```bash
+# from the old server (directories are created on the new one)
+rsync -aH --no-group --info=progress2 ~/data/ <host>:~/data/
+rsync -aH --no-group --info=progress2 --exclude '__pycache__/' \
+  ~/projects/segmentation/PolypBench/ <host>:~/projects/segmentation/PolypBench/
+```
+
+Then on the new server, create the three envs above. Keep the copied
+`configs/paths.yaml` (no `cp`) if the home directory is the same, and check
+that `predict.py` doesn't print `running on CPU`.
+
+To keep two servers in sync afterwards:
+
+- **Code:** commit and `git push` where you edited, then `git pull` (and
+  `git submodule update`) on the other. Don't rsync the code back and forth:
+  rsync overwrites whichever side is older or newer, without checking.
+- **Artifacts:** pull them with
+  `rsync -aHu --no-group <host>:<repo>/../artifacts/ <repo>/../artifacts/`.
+  `-u` skips files that are newer on the receiving side. Don't write the
+  same `<dataset>/<model_id>` output on both servers at once, and don't use
+  `--delete`, which would remove results that exist only on the receiving side.
+- **The NAS** (`/sld-shared`, mounted on every server) works as a go-between.
+  It doesn't allow changing a file's group, so use `rsync -rlt` instead of
+  `-a` when writing to it. Without `-H` the hard links become copies there.
+
 ## Everyday commands
 
 Run these from anywhere with the `polypbench` env active. Each step reads the
