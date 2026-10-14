@@ -12,7 +12,7 @@ import onnxruntime as ort
 class OnnxPredictor:
     """One ONNX model. predict(rgb_frame) -> probability map at input_size."""
 
-    def __init__(self, model_id, weights_path, input_size, input_channels, mean, std, output_index):
+    def __init__(self, model_id, weights_path, input_size, input_channels, mean, std, output_index, threads=None):
         if not weights_path.exists():
             raise FileNotFoundError(f"{model_id}: weights not found at {weights_path}")
         self.model_id = model_id
@@ -22,8 +22,12 @@ class OnnxPredictor:
         self.std = np.array(std, dtype=np.float32)
         self.output_index = output_index
 
+        options = ort.SessionOptions()
+        if threads:   # default is one thread per CPU core, per process
+            options.intra_op_num_threads = threads
+            options.inter_op_num_threads = threads
         self.session = ort.InferenceSession(
-            str(weights_path), providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
+            str(weights_path), sess_options=options, providers=["CUDAExecutionProvider", "CPUExecutionProvider"]
         )
         # get_available_providers() only reports what onnxruntime was compiled
         # with; check what this session actually loaded, since CUDA can fail

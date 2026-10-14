@@ -1,0 +1,17 @@
+name: sunseg
+root: SUN-SEG/SUN-SEG          # relative to data_root; built by scripts/build_sunseg.py
+frames_dir: Frame              # <root>/<split>/Frame/<clip>/<name>.jpg
+masks_dir: GT                  # <root>/<split>/GT/<clip>/<name>.png
+
+test_splits: [TestEasyDataset/Seen, TestHardDataset/Seen, TestEasyDataset/Unseen, TestHardDataset/Unseen]
+
+# Training uses TrainDataset (112 clips from 51 videos). SUN-SEG has no
+# validation split, and selecting checkpoints on a test split would leak, so
+# whole VIDEOS are held out of TrainDataset for validation: clips of the same
+# video show the same polyp, so no video appears in both. Chosen by shuffling
+# the 51 videos with random.Random(0) and taking them in order until >= 10% of
+# frames: 5 videos, 11 clips, 2,065 frames (10.6%). Training keeps 101 clips,
+# 17,479 frames.
+train_split: TrainDataset
+val_clips: [case33_1, case33_2, case33_3, case59_1, case59_2, case59_3,
+            case76_1, case76_2, case77, case78_1, case78_2]

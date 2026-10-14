@@ -1,0 +1,28 @@
+# Environment for training our lab's models (EMCAD, MK-UNet, SACNet) and
+# exporting them to ONNX. Separate from envs/sali.yml because SALI pins an
+# old timm (0.5.4) that these models can't import.
+#
+#   conda env create -f envs/train.yml
+#   conda activate train
+#   pip install -e . --no-deps                                 # polypbench
+name: train
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.10
+  - cuda-version=12.9            # must match the CUDA version pytorch was built with
+  - pytorch=2.9.*=cuda*
+  - torchvision
+  - timm                         # model code imports timm.models.layers / helpers
+  - albumentations               # same augmentation library as the original train_polyp.py
+  - simsimd<7                    # albucore imports `simsimd`; 7.x is an empty shim for numkong
+  - numpy
+  - opencv
+  - pandas
+  - pyyaml
+  - onnx                         # export
+  - onnxscript                   # torch.onnx exporter dependency
+  - onnxruntime=*=*cuda*         # verify exported models against PyTorch
+  - matplotlib-base              # loss/val curves
+  - pip

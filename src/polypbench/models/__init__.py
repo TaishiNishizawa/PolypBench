@@ -16,7 +16,25 @@ def load_model_config(model_id):
         return yaml.safe_load(f)
 
 
-def load_model(model_id):
+def load_groups():
+    with open(CONFIG_DIR / "groups.yaml") as f:
+        return yaml.safe_load(f)
+
+
+def resolve_models(names):
+    """Expand a --models argument: 'all', group names (configs/groups.yaml) and model ids, in order."""
+    if names == ["all"]:
+        return sorted(p.stem for p in MODELS_CONFIG_DIR.glob("*.yaml"))
+    groups = load_groups()["groups"]
+    model_ids = []
+    for name in names:
+        for model_id in groups.get(name, [name]):
+            if model_id not in model_ids:
+                model_ids.append(model_id)
+    return model_ids
+
+
+def load_model(model_id, threads=None):
     """Build a predictor from its config: .predict(rgb_frame) -> probability map."""
     config = load_model_config(model_id)
     if config["backend"] == "onnx":
@@ -29,5 +47,6 @@ def load_model(model_id):
             mean=config["mean"],
             std=config["std"],
             output_index=config["output_index"],
+            threads=threads,
         )
     raise ValueError(f"{model_id}: unknown backend '{config['backend']}'")

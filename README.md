@@ -49,6 +49,13 @@ After updating `environment.yml`, apply the change with
 Run these from anywhere with the `polypbench` env active. Each step reads the
 previous step's saved output, so you only rerun what changed.
 
+`--models` takes model ids, `all`, or a **group** from `configs/groups.yaml`:
+`colondb` (our ColonDB-trained models + SALI) or `sunseg` (everything trained on
+SUN-SEG: our retrained models + SALI). Tables always include every model.
+Side-by-side visuals (comparison sheets, stability comparison graphs) are made
+per group, in a folder named after it, so they stay readable as models are
+added.
+
 ```bash
 # 1. Run models over the dataset, saving a probability map for every frame  (~2 min per model)
 python scripts/predict.py --dataset inhouse --models all
@@ -58,14 +65,22 @@ conda activate sali && python scripts/predict_sali.py --dataset inhouse && conda
 # 2. Score the predictions: per-frame CSVs + per-clip summary tables  (seconds)
 python scripts/evaluate.py --dataset inhouse --models all
 
-# 3. Draw comparison sheets (PNG) and overlay videos  (~2 min)
-python scripts/visualize.py --dataset inhouse --models all
+# 3. Draw comparison sheets (PNG, one folder per group) and overlay videos  (~2 min per group)
+python scripts/visualize.py --dataset inhouse --models colondb
+python scripts/visualize.py --dataset inhouse --models sunseg
 
 # 4. Inter-frame stability from the saved predictions: CSVs + per-clip tables  (~5-10 min)
 python scripts/stability.py --dataset inhouse --models all
 
 # 5. Stability graphs + side-by-side videos  (~15 min; --no-videos for graphs only)
-python scripts/visualize_stability.py --dataset inhouse --models all
+python scripts/visualize_stability.py --dataset inhouse --models colondb
+python scripts/visualize_stability.py --dataset inhouse --models sunseg
+
+# 6. Same architecture, ColonDB- vs SUN-SEG-trained (pairs in configs/groups.yaml)  (seconds)
+python scripts/compare_trainsets.py --dataset inhouse
+
+# 7. Presentation tables (Markdown + CSV) from everything above + SUN-SEG toolbox results  (seconds)
+python scripts/make_tables.py                     # -> artifacts/reports/tables/
 
 # Tests
 pytest -v
@@ -78,6 +93,7 @@ pytest -v
 | `--models all` or `--models sacnet-b2@colondb emcad@colondb` | which models (ids = file names in `configs/models/`) |
 | `--postprocs none temporal_smooth` | post-processing variants to save (default: both) |
 | `--overwrite` | redo runs that are already complete (by default they are skipped) |
+| `--threads 4` | CPU threads for OpenCV/onnxruntime per run (their default is every core: several runs at once then overload the shared server) |
 
 Each model runs once per clip, and each post-processing variant is applied to
 that same output. A run counts as complete once its `run.json` exists.
@@ -99,9 +115,10 @@ It prints the Dice and false-alarm tables and writes all reports (see
 | `--models`, `--postprocs`, `--threshold` | as above |
 | `--sequences first_polyp_seen ...` | only these clips (default: all four) |
 | `--no-videos` / `--no-sheets` | skip one of the two outputs |
+| `--name` | sheet folder for a custom list of models (a group name is used automatically) |
 
-Note: a sheet's file name doesn't include which models it shows, so running
-with a subset of `--models` overwrites the full sheet.
+The CPU-heavy scripts (`evaluate`, `visualize`, `stability`,
+`visualize_stability`) also take `--threads` (default 8).
 
 ### One-off
 
@@ -113,6 +130,41 @@ python scripts/build_inhouse_manifest.py
 python scripts/build_sunseg.py
 ```
 
+### Training our models on SUN-SEG
+
+One shared script trains EMCAD, MK-UNet and SACNet. Their original
+`train_polyp.py` scripts use the same recipe (data loader, augmentation,
+structure loss, AdamW, cosine schedule, gradient clipping, multi-scale
+training), now in `configs/train/sunseg.yaml`. Per-model choices (which outputs
+are supervised, pretrained backbone, architecture arguments) are in the
+`train:` section of each `configs/models/<model_id>.yaml`. Model code comes
+from the pinned submodules in `third_party/`. Runs in the `train` env:
+
+```bash
+conda activate train
+CUDA_VISIBLE_DEVICES=0 python scripts/train.py --model_id emcad-b2@sunseg      # ~6 h on an A6000
+CUDA_VISIBLE_DEVICES=1 python scripts/train.py --model_id mkunet@sunseg        # ~3.5 h
+python scripts/train.py --model_id emcad-b2@sunseg --resume                   # continue after a crash
+python scripts/export_onnx.py --model_id emcad-b2@sunseg                      # best.pth -> model.onnx
+python scripts/train.py --model_id mkunet@sunseg --smoke                      # 20-step end-to-end check
+```
+
+- **Validation:** SUN-SEG has no validation split, so 5 whole videos (11
+  clips, 10.6% of frames) are held out of TrainDataset
+  (`configs/datasets/sunseg.yaml`). The best epoch is chosen on these, never on
+  a test split. (SALI's own script picks its checkpoint on
+  TestHardDataset/Seen, which flatters its Hard/Seen numbers.)
+- **Outputs:** `artifacts/checkpoints/<model_id>/`: `best.pth` (state_dict),
+  `last_state.pth` (for `--resume`), `train_log.csv` (loss and validation Dice
+  per epoch), `run.json` (recipe, config, git commits incl. the model code,
+  device), `train.log`, and after export `model.onnx` + `export.json`.
+- **Export** writes a single output, the final head. A multi-output export
+  invites using the wrong head (this happened with the old SACNet-b2 ONNX). It
+  refuses to write a file whose output differs from PyTorch by more than 1e-3
+  on validation frames.
+- Once `model.onnx` exists, the model is used like any other:
+  `predict.py --models emcad-b2@sunseg`, then `evaluate.py`, etc.
+
 ### SUN-SEG benchmark numbers (standard toolbox)
 
 SUN-SEG papers report S-α, mean E-φ, weighted F, mean F, mean sensitivity and
@@ -121,14 +173,24 @@ max Dice from the PNS+ evaluation toolbox (copy in `third_party/SALI/eval`).
 parallel (minutes instead of hours). Run it in the `sali` env:
 
 ```bash
+# Our models: predict on the four test splits (datasets sunseg_easy_seen, sunseg_hard_seen,
+# sunseg_easy_unseen, sunseg_hard_unseen), then score.
+for ds in sunseg_easy_seen sunseg_hard_seen sunseg_easy_unseen sunseg_hard_unseen; do
+  python scripts/predict.py --dataset $ds --models emcad-b2@sunseg --postprocs none     # ~10 min/model
+done
 conda activate sali
+python scripts/eval_sunseg_toolbox.py --model_id emcad-b2@sunseg
+# SALI: its own test_video.py output is already in the toolbox format
 python scripts/eval_sunseg_toolbox.py --model_id sali@sunseg \
-    --pred_dir third_party/SALI/res/Net_epoch_8_best/SUN-SEG     # contains <split>/<clip>/*.png
+    --pred_dir third_party/SALI/res/Net_epoch_8_best/SUN-SEG
 # -> artifacts/reports/sunseg/toolbox/<model_id>/<split>_eval.txt
 ```
 
-Predictions must follow the SUN-SEG convention: per-frame min-max normalized
-PNGs at `<pred_dir>/<split>/<clip>/<frame>.png`.
+The toolbox expects per-frame min-max normalized PNGs named after the original
+frames. Without `--pred_dir`, the script converts this model's `predict.py`
+output into that format (in `artifacts/predictions/sunseg_toolbox/<model_id>/`).
+SUN-SEG frames are ordered by (segment, image number), as the toolbox does,
+because some clips are spliced from several segments of the original video.
 
 SALI reproduction (our run vs. the paper's Table 1, in %), all within 0.1:
 
@@ -150,18 +212,28 @@ polypbench/
 ├── configs/
 │   ├── paths.example.yaml       template for paths.yaml (paths.yaml itself is gitignored)
 │   ├── datasets/inhouse.yaml    in-house clips + annotated frame -> mask file (generated)
-│   ├── models/<model_id>.yaml   one per model: weights, input size, normalization, provenance
+│   ├── models/<model_id>.yaml   one per model: weights, input size, normalization, provenance (+ `train:`)
+│   ├── groups.yaml              model groups for --models, and ColonDB/SUN-SEG training pairs
+│   ├── datasets/sunseg.yaml     SUN-SEG layout, test splits, held-out validation videos
+│   ├── train/sunseg.yaml        shared training recipe
 │   └── postproc/                none.yaml, temporal_smooth.yaml (+ its parameters)
 ├── scripts/
 │   ├── build_inhouse_manifest.py  locates each annotation in its clip -> datasets/inhouse.yaml
 │   ├── predict.py                 models -> per-frame probability PNGs
 │   ├── evaluate.py                PNGs + ground truth -> metric CSVs + per-clip tables
-│   └── visualize.py               PNGs + ground truth -> sheets + overlay videos
+│   ├── visualize.py               PNGs + ground truth -> sheets + overlay videos
+│   ├── stability.py, visualize_stability.py   inter-frame stability tables, graphs, videos
+│   ├── compare_trainsets.py       ColonDB- vs SUN-SEG-trained, per architecture
+│   ├── predict_sali.py            SALI (own env) -> same prediction layout
+│   ├── train.py, export_onnx.py   training our models; best.pth -> model.onnx
+│   ├── build_sunseg.py            official SUN-SEG layout (hard links)
+│   └── eval_sunseg_toolbox.py     SUN-SEG benchmark metrics (PNS+ toolbox, parallel)
 ├── src/polypbench/
 │   ├── paths.py                 DATA_ROOT, ARTIFACTS_ROOT, CONFIG_DIR, REPO_ROOT
 │   ├── data/
 │   │   ├── base.py              Sequence (frames + annotations), VideoFileSequence (mp4), Dataset
 │   │   ├── inhouse.py           load_inhouse(): builds the Dataset from datasets/inhouse.yaml
+│   │   ├── sunseg.py            load_sunseg(): the four test splits as datasets (FrameFolderSequence)
 │   │   └── __init__.py          load_dataset(name)
 │   ├── models/
 │   │   ├── onnx.py              OnnxPredictor: preprocessing + onnxruntime + sigmoid
@@ -181,7 +253,7 @@ polypbench/
 
 ```
 artifacts/
-├── checkpoints/<model_id>/model.onnx          model weights
+├── checkpoints/<model_id>/                     model.onnx (+ best.pth, logs for models we trained)
 ├── predictions/<dataset>/<model_id>/<postproc>/
 │   ├── run.json                               config, git commit, device, timestamps
 │   └── <clip>/000000.png ...                  one probability map per frame (0-255 = 0-1)
@@ -192,14 +264,15 @@ artifacts/
     ├── iou_ / precision_ / recall_by_clip.csv
     ├── false_alarm_ / fp_area_frac_by_clip.csv   frames without a polyp
     ├── summary.csv                            mean, std, n for every model/postproc/clip/metric
-    ├── sheets/<postproc>/<clip>.png           rows: annotated frames; cols: source, GT, each model
+    ├── sheets/<group>/<postproc>/<clip>.png   rows: annotated frames; cols: source, GT, each model of the group
+    ├── trainsets/summary.csv, dice_by_clip.csv   ColonDB- vs SUN-SEG-trained, per architecture
     ├── videos/<postproc>/<model_id>/<clip>.mp4   prediction on every frame; GT + Dice on annotated frames
     └── stability/
         ├── summary.csv                        per model/postproc/clip (+ ALL): IoU mean/median/p5/min, appear/vanish
         ├── iou_warped_mean_by_clip.csv        main stability table (also: iou_warped_p5_, iou_raw_mean_, appear_vanish_)
-        └── <postproc>/
-            ├── compare_<clip>.png             every model's motion-compensated IoU on one graph
-            └── <model_id>/<clip>.png, <clip>_side_by_side.mp4
+        ├── compare/<group>/<postproc>/<clip>.png   motion-compensated IoU of each model in the group
+        └── <postproc>/<model_id>/<clip>.png, <clip>_side_by_side.mp4
+reports/sunseg/toolbox/<model_id>/<split>_eval.txt  SUN-SEG benchmark metrics
 ```
 
 Colors: **green** = prediction, **red** = ground truth.
@@ -248,7 +321,8 @@ video is read **sequentially** (never by seeking).
 | `emcad@colondb` | RGB 352×352 | ONNX export, trained on ColonDB for 200 epochs (previous master's student) |
 | `mkunet@colondb` | RGB 352×352 | same |
 | `pvt-cascade@colondb` | RGB 352×352 | same |
-| `sacnet-b2@colondb` | RGB 352×352 | same |
+| `sacnet-b2@colondb` | RGB 352×352 | same (4-output export; the final head is output 3) |
+| `emcad-b2@sunseg`, `mkunet@sunseg`, `sacnet-b2@sunseg` | RGB 352×352 | trained by us on SUN-SEG (see Training) |
 | `sali@sunseg` | RGB 352×352, current + next frame + memory | official SUN-SEG checkpoint (MICCAI 2024); runs in `envs/sali.yml` via `scripts/predict_sali.py` |
 
 Model ids follow `arch-size@trainset[-tag]`; the training set is always part of

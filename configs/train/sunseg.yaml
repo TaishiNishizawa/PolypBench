@@ -1,0 +1,33 @@
+# Shared training recipe for our lab's image models on SUN-SEG.
+# Everything here is identical for every model; per-model choices (which
+# outputs are supervised, pretrained backbone) live in configs/models/<id>.yaml
+# under `train:`. Values follow the original train_polyp.py of EMCAD, MK-UNet
+# and SACNet (which share one recipe), except epochs and batch size.
+name: sunseg
+dataset: sunseg               # configs/datasets/sunseg.yaml: TrainDataset minus val_clips
+
+epochs: 20                    # originals: 200 on ColonDB (~500 images); SUN-SEG train is 17,479 frames
+batch_size: 8                 # EMCAD / MK-UNet default (SACNet's script used 16)
+img_size: 352
+multiscale: [0.75, 1.0, 1.25] # each batch is trained at these scales, rounded to a multiple of 32
+
+optimizer:
+  name: adamw
+  lr: 5.0e-4
+  weight_decay: 1.0e-4
+scheduler:                    # cosine over all epochs (originals' step decay at epoch 300 never fires)
+  name: cosine
+  eta_min: 1.0e-6
+grad_clip: 0.5                # clamp every gradient element to [-0.5, 0.5]
+
+augmentation:                 # albumentations, as in utils/dataloader_polyp.py
+  rotate_limit: 90            # Rotate(limit=90, p=0.5)
+  rotate_p: 0.5
+  vflip_p: 0.5
+  hflip_p: 0.5
+mean: [0.485, 0.456, 0.406]   # ImageNet normalization (RGB)
+std: [0.229, 0.224, 0.225]
+
+val_threshold: 0.5            # validation Dice: raw sigmoid >= 0.5 (no min-max), same as evaluate.py
+num_workers: 8
+seed: 0

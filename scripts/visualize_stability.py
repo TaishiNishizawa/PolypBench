@@ -13,13 +13,13 @@ Frame t is drawn against the transition (t-1 -> t). Frame 0 has no
 transition, and frames whose masks are empty in both t-1 and t have no IoU;
 in both cases only the cursor is drawn.
 
-Outputs, under <artifacts>/reports/<dataset>/stability/<postproc>/:
-    <model_id>/<clip>.png
-    <model_id>/<clip>_side_by_side.mp4
-    compare_<clip>.png
+Outputs, under <artifacts>/reports/<dataset>/stability/:
+    <postproc>/<model_id>/<clip>.png               one per model (not grouped)
+    <postproc>/<model_id>/<clip>_side_by_side.mp4
+    compare/<name>/<postproc>/<clip>.png           <name> = model group (configs/groups.yaml) or --name
 
 Usage:
-    python scripts/visualize_stability.py --dataset inhouse --models all
+    python scripts/visualize_stability.py --dataset inhouse --models sunseg
     python scripts/visualize_stability.py --dataset inhouse --models sali@sunseg --no-videos
 """
 
@@ -32,7 +32,7 @@ import pandas as pd
 from polypbench.data import load_dataset
 from polypbench.io import predictions
 from polypbench.metrics.overlap import binarize
-from polypbench.models import MODELS_CONFIG_DIR
+from polypbench.models import load_groups, resolve_models
 from polypbench.paths import ARTIFACTS_ROOT
 from polypbench.viz.overlays import PRED_COLOR, VideoWriter, label, overlay
 from polypbench.viz.stability import (PANEL_H, comparison_graph, cursor_geometry, iou_to_pixel_y,
@@ -87,15 +87,20 @@ def render_side_by_side(dataset_name, seq, model_id, postproc, threshold, df, gr
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", required=True)
-    parser.add_argument("--models", nargs="+", required=True, help="model ids, or 'all'")
+    parser.add_argument("--models", nargs="+", required=True, help="model ids, group names (configs/groups.yaml), or 'all'")
     parser.add_argument("--postprocs", nargs="+", default=["none", "temporal_smooth"])
     parser.add_argument("--sequences", nargs="+", help="only these clips (default: all)")
     parser.add_argument("--no-videos", action="store_true")
+    parser.add_argument("--name", help="comparison-graph folder (default: the group name, when --models is one group)")
+    parser.add_argument("--threads", type=int, default=8, help="CPU threads for OpenCV (default: every core)")
     args = parser.parse_args()
+    cv2.setNumThreads(args.threads)
+    name = args.name or (args.models[0] if len(args.models) == 1 and
+                         (args.models[0] == "all" or args.models[0] in load_groups()["groups"]) else None)
+    if name is None:
+        raise SystemExit("Pass --name for a custom set of models, or use a group name")
 
-    model_ids = args.models
-    if model_ids == ["all"]:
-        model_ids = sorted(p.stem for p in MODELS_CONFIG_DIR.glob("*.yaml"))
+    model_ids = resolve_models(args.models)
     dataset = load_dataset(args.dataset)
     stab_dir = ARTIFACTS_ROOT / "stability" / dataset.name
     out_root = ARTIFACTS_ROOT / "reports" / dataset.name / "stability"
@@ -114,7 +119,7 @@ def main():
             if args.sequences and seq.name not in args.sequences:
                 continue
             per_model = {m: df[df.sequence == seq.name] for m, df in tables.items()}
-            save_png(out_root / postproc / f"compare_{seq.name}.png",
+            save_png(out_root / "compare" / name / postproc / f"{seq.name}.png",
                      comparison_graph(per_model, seq.n_frames,
                                       f"{seq.name} - inter-frame mask consistency ({postproc})"))
             for model_id, df in per_model.items():

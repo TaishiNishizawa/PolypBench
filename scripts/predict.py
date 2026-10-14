@@ -19,8 +19,8 @@ import cv2
 
 from polypbench.data import load_dataset
 from polypbench.io import predictions
-from polypbench.models import MODELS_CONFIG_DIR, load_model, load_model_config
-from polypbench.paths import REPO_ROOT
+from polypbench.models import load_model, load_model_config, resolve_models
+from polypbench.paths import ARTIFACTS_ROOT, REPO_ROOT
 from polypbench.postproc import load_postproc, load_postproc_config
 
 
@@ -33,14 +33,14 @@ def git_commit():
         return "unknown"
 
 
-def run_model(dataset, model_id, postproc_names, overwrite):
+def run_model(dataset, model_id, postproc_names, overwrite, threads):
     todo = [p for p in postproc_names if overwrite or not predictions.is_complete(dataset.name, model_id, p)]
     for p in set(postproc_names) - set(todo):
         print(f"[skip] {model_id} / {p}: already complete")
     if not todo:
         return
 
-    model = load_model(model_id)
+    model = load_model(model_id, threads=threads)
     postprocs = {name: load_postproc(name) for name in todo}
     started = datetime.now().isoformat(timespec="seconds")
 
@@ -78,21 +78,27 @@ def run_model(dataset, model_id, postproc_names, overwrite):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", required=True)
-    parser.add_argument("--models", nargs="+", required=True, help="model ids, or 'all'")
+    parser.add_argument("--models", nargs="+", required=True, help="model ids, group names (configs/groups.yaml), or 'all'")
     parser.add_argument("--postprocs", nargs="+", default=["none", "temporal_smooth"])
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--threads", type=int, default=4,
+                        help="CPU threads for OpenCV and onnxruntime (default 4; their default is every core, "
+                             "which overloads a shared server when several runs go at once)")
     args = parser.parse_args()
+    cv2.setNumThreads(args.threads)
 
-    model_ids = args.models
-    if model_ids == ["all"]:
-        model_ids = sorted(p.stem for p in MODELS_CONFIG_DIR.glob("*.yaml"))
+    model_ids = resolve_models(args.models)
 
     dataset = load_dataset(args.dataset)
     for model_id in model_ids:
-        if load_model_config(model_id)["backend"] == "external":
+        config = load_model_config(model_id)
+        if config["backend"] == "external":
             print(f"[skip] {model_id}: external model, run its own script (see its config)")
             continue
-        run_model(dataset, model_id, args.postprocs, args.overwrite)
+        if not (ARTIFACTS_ROOT / config["weights"]).exists():
+            print(f"[skip] {model_id}: no weights yet at {config['weights']} (not trained/exported?)")
+            continue
+        run_model(dataset, model_id, args.postprocs, args.overwrite, args.threads)
 
 
 if __name__ == "__main__":

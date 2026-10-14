@@ -9,4 +9,4 @@ input_size: 352
 input_channels: 3          # RGB input
 mean: [0.485, 0.456, 0.406]
 std: [0.229, 0.224, 0.225]
-output_index: 0          # 'output', first of 4 deep-supervision heads (logits)
+output_index: 3          # final head o1 (finest); ONNX outputs are [o4, o3, o2, o1], o4 = coarsest

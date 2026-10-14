@@ -12,14 +12,20 @@ runs the toolbox's own code unchanged but scores clips in parallel:
   pass 2  rerun eval_engine_vps with the scorer swapped for a lookup, so all
           averaging/max logic is the toolbox's own.
 
-Predictions must follow the toolbox convention: <pred_dir>/<split>/<clip>/<frame>.png,
-per-frame min-max normalized as SUN-SEG methods do. Runs in the `sali` env
-(needs prettytable).
+The toolbox expects <pred_dir>/<split>/<clip>/<frame name>.png, per-frame
+min-max normalized as SUN-SEG methods do. Two ways to provide that:
+
+  --pred_dir DIR   a folder already in that format (e.g. SALI's own test_video.py output)
+  (no --pred_dir)  use this model's predictions saved by predict.py for the
+                   sunseg_* datasets; they are converted (min-max, original
+                   frame names) into <artifacts>/predictions/sunseg_toolbox/<model_id>/
+
+Runs in the `sali` env (needs prettytable).
 
 Usage:
     python scripts/eval_sunseg_toolbox.py --model_id sali@sunseg \\
         --pred_dir third_party/SALI/res/Net_epoch_8_best/SUN-SEG
-    python scripts/eval_sunseg_toolbox.py --model_id sali@sunseg --pred_dir ... --splits TestEasyDataset/Seen
+    python scripts/eval_sunseg_toolbox.py --model_id emcad-b2@sunseg          # from predict.py output
 """
 
 import argparse
@@ -30,8 +36,11 @@ from argparse import Namespace
 from multiprocessing import Pool
 from pathlib import Path
 
+import cv2
 import numpy as np
 
+from polypbench.data.sunseg import SPLITS as DATASET_SPLITS, load_sunseg
+from polypbench.io import predictions
 from polypbench.paths import ARTIFACTS_ROOT, DATA_ROOT, REPO_ROOT
 
 TOOLBOX_DIR = REPO_ROOT / "third_party" / "SALI" / "eval"
@@ -50,15 +59,39 @@ def score(args):
     return _score_clip(gt_pth_lst=list(gt), pred_pth_lst=list(pred), metrics=METRICS)
 
 
+def convert_predictions(model_id, splits):
+    """predict.py output (raw sigmoid, frame-index names) -> toolbox format (min-max, original names)."""
+    out_root = ARTIFACTS_ROOT / "predictions" / "sunseg_toolbox" / model_id
+    for dataset_name, split in DATASET_SPLITS.items():
+        if split not in splits:
+            continue
+        if not predictions.is_complete(dataset_name, model_id, "none"):
+            raise FileNotFoundError(f"No complete predictions for {model_id} on {dataset_name}; "
+                                    f"run: python scripts/predict.py --dataset {dataset_name} --models {model_id} --postprocs none")
+        dataset = load_sunseg(dataset_name)
+        n = 0
+        for seq in dataset:
+            clip_dir = out_root / split / seq.name
+            clip_dir.mkdir(parents=True, exist_ok=True)
+            for idx, frame_path in enumerate(seq.frame_paths):
+                prob = predictions.read_prediction(predictions.frame_path(dataset_name, model_id, "none", seq.name, idx))
+                prob = (prob - prob.min()) / (prob.max() - prob.min() + 1e-8)
+                cv2.imwrite(str(clip_dir / f"{frame_path.stem}.png"), np.uint8(prob * 255))
+                n += 1
+        print(f"converted {dataset_name}: {n} frames -> {out_root / split}", flush=True)
+    return out_root
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model_id", required=True, help="name for the results folder")
-    parser.add_argument("--pred_dir", required=True, type=Path, help="folder containing <split>/<clip>/*.png")
+    parser.add_argument("--pred_dir", type=Path,
+                        help="folder containing <split>/<clip>/*.png (default: convert predict.py output)")
     parser.add_argument("--splits", nargs="+", default=SPLITS, choices=SPLITS)
     parser.add_argument("--workers", type=int, default=48)
     args = parser.parse_args()
 
-    pred_dir = args.pred_dir.resolve()
+    pred_dir = (args.pred_dir or convert_predictions(args.model_id, args.splits)).resolve()
     missing = [s for s in args.splits if not (pred_dir / s).is_dir()]
     if missing:
         raise FileNotFoundError(f"No predictions for {missing} under {pred_dir}")

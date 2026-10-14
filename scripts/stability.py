@@ -21,6 +21,8 @@ Usage:
 """
 
 import argparse
+
+import cv2
 import time
 
 import pandas as pd
@@ -29,7 +31,7 @@ from polypbench.data import load_dataset
 from polypbench.io import predictions
 from polypbench.metrics.overlap import binarize
 from polypbench.metrics.stability import TRANSITION_COLUMNS, FrameMotion, summarize_transitions, transition_metrics
-from polypbench.models import MODELS_CONFIG_DIR
+from polypbench.models import resolve_models
 from polypbench.paths import ARTIFACTS_ROOT
 
 ALL = "ALL"
@@ -81,14 +83,14 @@ def summarize(transitions, sequence_order):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", required=True)
-    parser.add_argument("--models", nargs="+", required=True, help="model ids, or 'all'")
+    parser.add_argument("--models", nargs="+", required=True, help="model ids, group names (configs/groups.yaml), or 'all'")
     parser.add_argument("--postprocs", nargs="+", default=["none", "temporal_smooth"])
     parser.add_argument("--threshold", type=float, default=0.5)
+    parser.add_argument("--threads", type=int, default=8, help="CPU threads for OpenCV (default: every core)")
     args = parser.parse_args()
+    cv2.setNumThreads(args.threads)
 
-    model_ids = args.models
-    if model_ids == ["all"]:
-        model_ids = sorted(p.stem for p in MODELS_CONFIG_DIR.glob("*.yaml"))
+    model_ids = resolve_models(args.models)
     dataset = load_dataset(args.dataset)
 
     runs = []

@@ -1,0 +1,22 @@
+# Named sets of models, so visual comparisons stay readable as the number of
+# models grows. Scripts accept a group name wherever they take --models, and
+# visual outputs that compare models side by side go to a folder per group.
+
+groups:
+  colondb:          # our models as originally trained on ColonDB, plus the SOTA reference
+    - emcad@colondb
+    - mkunet@colondb
+    - pvt-cascade@colondb
+    - sacnet-b2@colondb
+    - sali@sunseg
+  sunseg:           # everything trained on SUN-SEG: our retrained models and SALI
+    - emcad-b2@sunseg
+    - mkunet@sunseg
+    - sacnet-b2@sunseg
+    - sali@sunseg
+
+# Same architecture, different training data: compared by scripts/compare_trainsets.py
+trainset_pairs:
+  EMCAD:     {colondb: emcad@colondb,     sunseg: emcad-b2@sunseg}
+  MK-UNet:   {colondb: mkunet@colondb,    sunseg: mkunet@sunseg}
+  SACNet-b2: {colondb: sacnet-b2@colondb, sunseg: sacnet-b2@sunseg}

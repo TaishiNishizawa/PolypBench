@@ -9,12 +9,12 @@ the source frame, the ground truth, then each model's prediction with its
 Dice (or its false-positive area on frames with no polyp).
 
 Outputs, under <artifacts>/reports/<dataset>/:
-    videos/<postproc>/<model_id>/<clip>.mp4
-    sheets/<postproc>/<clip>.png
+    videos/<postproc>/<model_id>/<clip>.mp4      one per model (not grouped)
+    sheets/<name>/<postproc>/<clip>.png          <name> = model group (configs/groups.yaml) or --name
 
 Usage:
-    python scripts/visualize.py --dataset inhouse --models all
-    python scripts/visualize.py --dataset inhouse --models sacnet-b2@colondb emcad@colondb --no-videos
+    python scripts/visualize.py --dataset inhouse --models sunseg            # sheets/sunseg/...
+    python scripts/visualize.py --dataset inhouse --models sacnet-b2@colondb sacnet-b2@sunseg --name sacnet_trainsets
 """
 
 import argparse
@@ -25,7 +25,7 @@ import numpy as np
 from polypbench.data import load_dataset
 from polypbench.io import predictions
 from polypbench.metrics.overlap import binarize, frame_metrics
-from polypbench.models import MODELS_CONFIG_DIR
+from polypbench.models import load_groups, resolve_models
 from polypbench.paths import ARTIFACTS_ROOT
 from polypbench.viz.overlays import GT_COLOR, PRED_COLOR, VideoWriter, header_cell, label, overlay
 
@@ -90,20 +90,33 @@ def render_sheet(dataset, seq, model_ids, postproc, threshold, out_path):
     cv2.imwrite(str(out_path), cv2.cvtColor(sheet, cv2.COLOR_RGB2BGR))
 
 
+def sheet_name(args):
+    """Sheets compare models side by side, so each set of models gets its own folder."""
+    if args.name:
+        return args.name
+    if len(args.models) == 1 and (args.models[0] == "all" or args.models[0] in load_groups()["groups"]):
+        return args.models[0]
+    if args.no_sheets:
+        return None
+    raise SystemExit("Pass --name for a custom set of models (sheets/<name>/...), or use a group name")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dataset", required=True)
-    parser.add_argument("--models", nargs="+", required=True, help="model ids, or 'all'")
+    parser.add_argument("--models", nargs="+", required=True, help="model ids, group names (configs/groups.yaml), or 'all'")
     parser.add_argument("--postprocs", nargs="+", default=["none", "temporal_smooth"])
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--sequences", nargs="+", help="only these clips (default: all)")
     parser.add_argument("--no-videos", action="store_true")
     parser.add_argument("--no-sheets", action="store_true")
+    parser.add_argument("--name", help="sheet folder name (default: the group name, when --models is one group)")
+    parser.add_argument("--threads", type=int, default=8, help="CPU threads for OpenCV (default: every core)")
     args = parser.parse_args()
+    cv2.setNumThreads(args.threads)
+    name = sheet_name(args)
 
-    model_ids = args.models
-    if model_ids == ["all"]:
-        model_ids = sorted(p.stem for p in MODELS_CONFIG_DIR.glob("*.yaml"))
+    model_ids = resolve_models(args.models)
     dataset = load_dataset(args.dataset)
     out_root = ARTIFACTS_ROOT / "reports" / dataset.name
 
@@ -117,7 +130,7 @@ def main():
             if args.sequences and seq.name not in args.sequences:
                 continue
             if not args.no_sheets:
-                path = out_root / "sheets" / postproc / f"{seq.name}.png"
+                path = out_root / "sheets" / name / postproc / f"{seq.name}.png"
                 render_sheet(dataset, seq, ready, postproc, args.threshold, path)
                 print(f"[sheet] {path}")
             if not args.no_videos:

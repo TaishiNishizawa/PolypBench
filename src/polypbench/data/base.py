@@ -49,6 +49,20 @@ class VideoFileSequence(Sequence):
         finally:
             cap.release()
 
+class FrameFolderSequence(Sequence):
+    """A video stored as one image file per frame. `frame_paths` must already be in playback order."""
+
+    def __init__(self, name, frame_paths, fps, annotations):
+        super().__init__(name, len(frame_paths), fps, annotations)
+        self.frame_paths = list(frame_paths)
+
+    def frames(self):
+        for idx, path in enumerate(self.frame_paths):
+            frame = cv2.imread(str(path))
+            if frame is None:
+                raise RuntimeError(f"Failed to read frame {path}")
+            yield idx, cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
 class Dataset:
     def __init__(self, name, sequences):
         self.name = name
