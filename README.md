@@ -165,6 +165,26 @@ python scripts/train.py --model_id mkunet@sunseg --smoke                      # 
 - Once `model.onnx` exists, the model is used like any other:
   `predict.py --models emcad-b2@sunseg`, then `evaluate.py`, etc.
 
+### Training a causal SALI
+
+SALI's released code segments frame i with frame i+1 (its loader comes from
+SLT-Net, an offline model), although the paper describes an online model that
+conditions on frame i-1. `scripts/train_sali.py` retrains SALI with the
+previous frame instead (`sali@sunseg-causal`). It uses SALI's own recipe, not
+the shared one (`configs/train/sali.yaml`: the paper's 30 epochs, batch 14,
+Adam 1e-4, weight decay 1e-4, plus the code's gradient clamp, augmentation,
+loss and `max_skip` schedule). The model code is imported unchanged from
+`third_party/SALI`, the encoder starts from ImageNet PVTv2-b5 like our models,
+and the best epoch is chosen on the same held-out videos as `train.py`. Runs in
+the `sali` env; batch 14 needs ~33 GiB of GPU memory:
+
+```bash
+conda activate sali
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=8 python -u scripts/train_sali.py --model_id sali@sunseg-causal
+python scripts/train_sali.py --model_id sali@sunseg-causal --resume          # continue after a crash
+python scripts/predict_sali.py --model_id sali@sunseg-causal --dataset inhouse
+```
+
 ### SUN-SEG benchmark numbers (standard toolbox)
 
 SUN-SEG papers report S-α, mean E-φ, weighted F, mean F, mean sensitivity and
@@ -225,6 +245,7 @@ polypbench/
 │   ├── stability.py, visualize_stability.py   inter-frame stability tables, graphs, videos
 │   ├── compare_trainsets.py       ColonDB- vs SUN-SEG-trained, per architecture
 │   ├── predict_sali.py            SALI (own env) -> same prediction layout
+│   ├── train_sali.py              retraining SALI causally (own env)
 │   ├── train.py, export_onnx.py   training our models; best.pth -> model.onnx
 │   ├── build_sunseg.py            official SUN-SEG layout (hard links)
 │   └── eval_sunseg_toolbox.py     SUN-SEG benchmark metrics (PNS+ toolbox, parallel)
@@ -324,6 +345,7 @@ video is read **sequentially** (never by seeking).
 | `sacnet-b2@colondb` | RGB 352×352 | same (4-output export; the final head is output 3) |
 | `emcad-b2@sunseg`, `mkunet@sunseg`, `sacnet-b2@sunseg` | RGB 352×352 | trained by us on SUN-SEG (see Training) |
 | `sali@sunseg` | RGB 352×352, current + next frame + memory | official SUN-SEG checkpoint (MICCAI 2024); runs in `envs/sali.yml` via `scripts/predict_sali.py` |
+| `sali@sunseg-causal` | RGB 352×352, current + previous frame + memory | SALI retrained by us on SUN-SEG with causal frame pairs (see Training a causal SALI) |
 
 Model ids follow `arch-size@trainset[-tag]`; the training set is always part of
 the name. Training code for each model is in `../../repo_clones/`
@@ -331,7 +353,8 @@ the name. Training code for each model is in `../../repo_clones/`
 
 SACNet-b0 was dropped: its only available ONNX export is broken (Dice ≈ 0.02).
 
-SALI is not causal: it uses the next frame to segment the current one. Its
+`sali@sunseg` is not causal: it uses the next frame to segment the current
+one (`partner: next` in its config; `sali@sunseg-causal` uses `prev`). Its
 saved outputs are the raw sigmoid, not its own per-frame min-max rescaling.
 `scripts/predict_sali.py` reproduces SALI's `test_video.py` outputs exactly.
 

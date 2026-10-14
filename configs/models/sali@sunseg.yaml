@@ -12,6 +12,7 @@ input_size: 352
 mean: [0.485, 0.456, 0.406]
 std: [0.229, 0.224, 0.225]
 mem_freq: 5                # add to the long-term memory bank every 5 frames (SALI default)
+partner: next              # frame i is segmented with frame i+1, as in SALI's released code
 notes: >-
   Video model: each frame is segmented using the NEXT frame (the last frame
   uses the previous one) plus a memory bank of earlier frames, so it is not

@@ -40,3 +40,5 @@ dependencies:
   - prettytable                  # SALI/PNS+ evaluation toolbox (third_party/SALI/eval)
   - gdown                        # downloading checkpoints from Google Drive
   - pip
+  - pip:
+      - thop                     # imported by SALI's utils/utils.py (training only); not on conda-forge
