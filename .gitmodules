@@ -17,3 +17,15 @@
 	path = third_party/CASCADE
 	url = https://github.com/TaishiNishizawa/CASCADE.git
 	ignore = untracked
+[submodule "third_party/PraNet"]
+	path = third_party/PraNet
+	url = https://github.com/TaishiNishizawa/PraNet
+	ignore = untracked
+[submodule "third_party/Polyp-PVT"]
+	path = third_party/Polyp-PVT
+	url = https://github.com/TaishiNishizawa/Polyp-PVT
+	ignore = untracked
+[submodule "third_party/VPS"]
+	path = third_party/VPS
+	url = https://github.com/TaishiNishizawa/VPS
+	ignore = untracked
