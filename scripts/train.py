@@ -9,13 +9,17 @@ Runs in the `train` env (envs/train.yml). Writes to
 <artifacts>/checkpoints/<model_id>/:
     best.pth          state_dict of the best validation epoch (export this)
     last_state.pth    model + optimizer + scheduler state, for --resume
-    train_log.csv     per epoch: train loss, val Dice, lr, time
+    train_log.csv     per epoch: train loss, val Dice, lr, time (+ test Dice with --test_every)
     run.json          recipe, model config, git commits, device, versions
 
 Usage:
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py --model_id emcad-b2@sunseg
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py --model_id emcad-b2@sunseg --resume
     python scripts/train.py --model_id mkunet@sunseg --smoke     # 20 steps, 1 epoch, to a scratch folder
+
+--test_every N also logs Dice on every Nth frame of each SUN-SEG test split per
+epoch. That is for monitoring only (e.g. how much picking the epoch on a test
+split would flatter the result); the best epoch is still chosen on validation.
 """
 
 import argparse
@@ -31,9 +35,10 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
+from polypbench.data.sunseg import load_sunseg_config
 from polypbench.models import load_model_config
 from polypbench.paths import ARTIFACTS_ROOT, CONFIG_DIR, REPO_ROOT
-from polypbench.train.data import SegmentationFrames, build_transform, train_val_pairs
+from polypbench.train.data import SegmentationFrames, build_transform, sunseg_pairs, train_val_pairs
 from polypbench.train.loop import train_one_epoch, validate
 from polypbench.train.models import build_model
 
@@ -56,6 +61,8 @@ def main():
     parser.add_argument("--resume", action="store_true", help="continue from last_state.pth")
     parser.add_argument("--overwrite", action="store_true", help="start over even if checkpoints exist")
     parser.add_argument("--smoke", action="store_true", help="quick end-to-end check: 1 epoch of 20 steps")
+    parser.add_argument("--test_every", type=int, default=0,
+                        help="also log Dice on every Nth frame of each test split per epoch (monitoring only; 0 = off)")
     args = parser.parse_args()
 
     with open(CONFIG_DIR / "train" / f"{args.recipe}.yaml") as f:
@@ -84,6 +91,15 @@ def main():
                               pin_memory=True, drop_last=False, persistent_workers=True)
     val_loader = DataLoader(SegmentationFrames(val_pairs, build_transform(recipe, train=False)),
                             batch_size=16, shuffle=False, num_workers=recipe["num_workers"], pin_memory=True)
+    test_loaders = {}                 # monitoring only, never used to pick the best epoch
+    if args.test_every:
+        for split in load_sunseg_config()["test_splits"]:
+            name = "test_" + split.replace("Test", "").replace("Dataset", "").replace("/", "_").lower()
+            pairs = sunseg_pairs(split)[::args.test_every * (50 if args.smoke else 1)]
+            test_loaders[name] = DataLoader(SegmentationFrames(pairs, build_transform(recipe, train=False)),
+                                            batch_size=16, shuffle=False, num_workers=recipe["num_workers"],
+                                            pin_memory=True)
+    log_fields = LOG_FIELDS + list(test_loaders)
     print(f"{args.model_id}: {len(train_pairs)} train frames, {len(val_pairs)} val frames, "
           f"{len(train_loader)} steps/epoch, {recipe['epochs']} epochs")
 
@@ -111,6 +127,7 @@ def main():
         "model_config": model_config,
         "train_frames": len(train_pairs),
         "val_frames": len(val_pairs),
+        "test_every": args.test_every,
         "polypbench_commit": git_commit(REPO_ROOT),
         "model_code_commit": git_commit(REPO_ROOT / spec["code"]),
         "device": torch.cuda.get_device_name(0),
@@ -126,6 +143,8 @@ def main():
         print(f"Epoch {epoch}/{recipe['epochs']}  lr {lr:.2e}", flush=True)
         train_loss = train_one_epoch(model, train_loader, optimizer, recipe, spec, device)
         val_dice = validate(model, val_loader, spec["final_output"], recipe["val_threshold"], device)
+        test_dice = {name: validate(model, loader, spec["final_output"], recipe["val_threshold"], device)
+                     for name, loader in test_loaders.items()}
         scheduler.step()
 
         is_best = val_dice > best_dice
@@ -138,13 +157,15 @@ def main():
         minutes = (time.time() - t0) / 60
         new_log = not log_path.exists()
         with open(log_path, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=LOG_FIELDS)
+            writer = csv.DictWriter(f, fieldnames=log_fields)
             if new_log:
                 writer.writeheader()
             writer.writerow({"epoch": epoch, "train_loss": f"{train_loss:.5f}", "val_dice": f"{val_dice:.5f}",
-                             "lr": f"{lr:.3e}", "epoch_minutes": f"{minutes:.1f}", "best": int(is_best)})
+                             "lr": f"{lr:.3e}", "epoch_minutes": f"{minutes:.1f}", "best": int(is_best),
+                             **{name: f"{d:.5f}" for name, d in test_dice.items()}})
         print(f"Epoch {epoch}: train loss {train_loss:.4f}  val Dice {val_dice:.4f}"
-              f"{'  (best)' if is_best else ''}  [{minutes:.1f} min]", flush=True)
+              f"{'  (best)' if is_best else ''}  [{minutes:.1f} min]"
+              + "".join(f"  {name} {d:.4f}" for name, d in test_dice.items()), flush=True)
 
     run_info.update(finished=datetime.now().isoformat(timespec="seconds"), best_val_dice=best_dice)
     with open(out_dir / "run.json", "w") as f:

@@ -10,10 +10,15 @@ groups:
     - sacnet-b2@colondb
     - sali@sunseg
   sunseg:           # everything trained on SUN-SEG: our retrained models and SALI
+    - sali@sunseg-causal
+    - pvt-cascade@sunseg-prime
+    - emcad-b2@sunseg-prime
+    - sali@sunseg
     - emcad-b2@sunseg
     - mkunet@sunseg
     - sacnet-b2@sunseg
-    - sali@sunseg
+    
+    
 
 # Same architecture, different training data: compared by scripts/compare_trainsets.py
 trainset_pairs:

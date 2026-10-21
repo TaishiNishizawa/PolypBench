@@ -1,0 +1,34 @@
+# Recipe of the PRIME paper (Rahman & Marculescu, MIDL 2025) for SUN-SEG, which
+# follows CASCADE's train_polyp.py: AdamW lr 1e-4 (constant), wd 1e-4, batch 16,
+# 30 epochs, no augmentation, multiscale [0.75, 1, 1.25]. Used to test whether
+# our sunseg recipe (lr 5e-4, augmentation) explains the gap to PRIME's
+# PVT-CASCADE on the Unseen splits. Unlike CASCADE's script, the best epoch is
+# still chosen on our held-out validation videos, never on a test split.
+name: prime
+dataset: sunseg               # configs/datasets/sunseg.yaml: TrainDataset minus val_clips
+
+epochs: 30
+batch_size: 16
+img_size: 352
+multiscale: [0.75, 1.0, 1.25]
+
+optimizer:
+  name: adamw
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+scheduler:                    # eta_min = lr: the cosine schedule stays constant (CASCADE's step decay never fires)
+  name: cosine
+  eta_min: 1.0e-4
+grad_clip: 0.5                # CASCADE --clip 0.5
+
+augmentation:                 # none (PRIME §4.2); all probabilities 0
+  rotate_limit: 90
+  rotate_p: 0.0
+  vflip_p: 0.0
+  hflip_p: 0.0
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+
+val_threshold: 0.5
+num_workers: 8
+seed: 0

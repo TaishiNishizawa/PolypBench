@@ -1,0 +1,24 @@
+model_id: pvt-cascade@sunseg-prime
+arch: pvt-cascade
+backend: onnx
+weights: checkpoints/pvt-cascade@sunseg-prime/model.onnx   # relative to artifacts_root; written by scripts/export_onnx.py
+source: >-
+  Trained by us on SUN-SEG TrainDataset (minus held-out validation videos)
+  with scripts/train.py and configs/train/prime.yaml (PRIME recipe, which is
+  CASCADE's own); CASCADE code from third_party/CASCADE (fork of SLDGroup/CASCADE).
+input_size: 352
+input_channels: 3
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+output_index: 0                    # the export has a single output: the sum of the heads
+
+train:
+  code: third_party/CASCADE        # added to sys.path
+  module: lib.networks
+  class: PVT_CASCADE
+  kwargs:
+    n_class: 1
+    pretrained_path: null          # don't load in __init__; build_model loads pretrained_backbone (with a check)
+  pretrained_backbone: checkpoints/pretrained/pvt_v2_b2.pth   # ImageNet PVTv2-b2, loaded into model.backbone
+  supervision: heads               # loss on each of the 4 heads (as in CASCADE's train_polyp.py)
+  final_output: sum                # prediction = p1 + p2 + p3 + p4 (CASCADE's additive aggregation)

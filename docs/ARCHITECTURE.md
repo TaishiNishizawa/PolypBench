@@ -124,12 +124,23 @@ These are the decisions the rest of the codebase is built on. Changing one
 means touching every stage.
 
 1. **Predictions on disk are the contract between stages.** Each one is a
-   single-channel `uint8` PNG probability map (0–255) at the original frame
-   resolution, one per frame, at
-   `artifacts/predictions/<dataset>/<model_id>/<postproc>/<sequence>/<frame:06d>.png`,
-   with a `run.json` alongside. Only `io/predictions.py` reads or writes them.
+   single-channel `uint8` probability map (0–255, raw sigmoid, never min-max
+   normalized), one per frame, under
+   `artifacts/predictions/<dataset>/<model_id>/<postproc>/<sequence>/`, with a
+   `run.json` alongside. Only `io/predictions.py` reads or writes them; callers
+   read and write a sequence through it and never build file paths.
    Probabilities are saved, not binary masks, so threshold-sweep metrics stay
-   possible.
+   possible. The encoding depends on the dataset's size:
+   - **In-house, SUN-SEG:** one PNG per frame, `<frame:06d>.png`, at the
+     original frame resolution.
+   - **REAL-Colon** (~1M frames for val + test): `chunk_<k:04d>.npz`, up to
+     2,000 frames each (`frames`: int32 frame ids, `probs`: uint8 N×H×W), at
+     the **model's own output resolution**: whatever its forward pass returns
+     as the final prediction, after the model's own upsampling (learned or
+     fixed) and before any resizing by us (352×352 for EMCAD and SALI).
+     `run.json` records the map size; the evaluator scales to each video's
+     frame size. Downsampling to 176 px was measured to lose ~8% of connected
+     components (small fragments), which matters for mask→box extraction.
 2. **`model_id` = `arch-size@trainset[-tag]`**, e.g. `sacnet-b2@colondb`,
    `sacnet-b2@sunseg-v2`, `sali@sunseg`. It is the key that joins model
    configs, checkpoints, predictions, metrics, and profiles. The training set
@@ -162,6 +173,12 @@ resolve against the repo root. The environment variables
 `POLYPBENCH_DATA_ROOT` and `POLYPBENCH_ARTIFACTS_ROOT` override them for a
 single run. Code imports the resolved values from `polypbench.paths` and never
 hardcodes a path. Dataset configs give their `root` relative to `data_root`.
+
+Data or outputs too large for the local disk (REAL-Colon frames and
+predictions) live on the lab NAS and are linked in with symlinks, e.g.
+`<data_root>/REAL-Colon` and `artifacts/predictions/realcolon_<split>`. Moving
+them later only means moving the folder and repointing the link; no code
+changes.
 
 ## Environments
 

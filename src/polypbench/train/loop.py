@@ -3,7 +3,7 @@
 import torch
 import torch.nn.functional as F
 
-from polypbench.train.models import as_list
+from polypbench.train.models import as_list, final_prediction
 
 
 def structure_loss(pred, mask):
@@ -22,6 +22,8 @@ def supervised_loss(outputs, mask, supervision, final_output):
     outputs = as_list(outputs)
     if supervision == "heads_and_sum":      # EMCAD / SACNet: every head, plus their sum
         return sum(structure_loss(o, mask) for o in outputs) + structure_loss(sum(outputs), mask)
+    if supervision == "heads":              # CASCADE: every head (their sum is the prediction, but not supervised)
+        return sum(structure_loss(o, mask) for o in outputs)
     if supervision == "final_only":         # MK-UNet
         return structure_loss(outputs[final_output], mask)
     raise ValueError(f"Unknown supervision '{supervision}'")
@@ -61,7 +63,7 @@ def validate(model, loader, final_output, threshold, device):
     model.eval()
     dices = []
     for images, masks in loader:
-        pred = torch.sigmoid(as_list(model(images.to(device)))[final_output]) >= threshold
+        pred = torch.sigmoid(final_prediction(model(images.to(device)), final_output)) >= threshold
         gt = masks.to(device) > 0.5
         inter = (pred & gt).flatten(1).sum(1).float()
         denom = (pred.flatten(1).sum(1) + gt.flatten(1).sum(1)).float()

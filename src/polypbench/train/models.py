@@ -47,6 +47,12 @@ def as_list(outputs):
     return outputs if isinstance(outputs, (list, tuple)) else [outputs]
 
 
+def final_prediction(outputs, final_output):
+    """The model's prediction (logits): one output by index, or "sum" of all outputs (CASCADE's additive aggregation)."""
+    outputs = as_list(outputs)
+    return sum(outputs) if final_output == "sum" else outputs[final_output]
+
+
 class FinalOutput(nn.Module):
     """Wraps a model so it returns only its final prediction (logits) - used for ONNX export."""
 
@@ -56,4 +62,4 @@ class FinalOutput(nn.Module):
         self.final_output = final_output
 
     def forward(self, x):
-        return as_list(self.model(x))[self.final_output]
+        return final_prediction(self.model(x), self.final_output)

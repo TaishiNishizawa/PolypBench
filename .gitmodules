@@ -13,3 +13,7 @@
 	path = third_party/SACNet
 	url = https://github.com/TaishiNishizawa/SACNet.git
 	ignore = untracked
+[submodule "third_party/CASCADE"]
+	path = third_party/CASCADE
+	url = https://github.com/TaishiNishizawa/CASCADE.git
+	ignore = untracked
