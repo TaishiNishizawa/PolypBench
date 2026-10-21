@@ -46,6 +46,12 @@ limitations section names temporal models and more lesions as open; we cover bot
 - REAL-Colon: metadata + all 60 annotation archives; frames for all 20 val/test videos,
   verified complete (`verify` command: 20/20).
 - Tools written (see section 9): `realcolon_subset.py`, `view_annotations.py`, `make_clip.py`.
+- REAL-Colon in PolypBench (2026-10-21): dataset loader (`realcolon_val/test`, tests pass) and
+  npz prediction I/O (section 8). `predict.py` / `predict_sali.py` write npz for REAL-Colon;
+  in-house PNG output verified byte-identical to before (EMCAD none + temporal_smooth, causal SALI);
+  both models smoke-tested on 300 REAL-Colon frames.
+- Throughput seen so far (A6000, in-house, incl. PNG writing): EMCAD ~29 fps, SALI ~7.5 fps.
+  At 7.5 fps one SALI pass over val + test (963k frames) is ~36 h: measure properly in the pilot.
 
 **In progress**
 - REAL-Colon training split (40 videos, ~595 GB) downloading to the NAS (`--jobs 4`).
@@ -70,20 +76,36 @@ limitations section names temporal models and more lesions as open; we cover bot
   REAL-Colon is re-downloadable, but **keep model predictions and results backed up elsewhere**
   (git for code; a second copy for results).
 - Treat the REAL-Colon folder as read-only. Write derived data (caches, predictions) to separate folders.
-- `/mnt/dm-3` and `/mnt/dm-5` (local 16 TB HDDs; 13 TB and 7.5 TB free) and `/mnt/dm-4`
-  (local 3.5 TB SATA SSD) are not writable by us (group 1011, no named members); access would
-  need ECE IT (ask senior).
+- **`/mnt/dm-3/taishi`** (local 16 TB HDD, 13 TB free): our folder, granted 2026-10-21. Owned by
+  us, mode 700. The rest of `/mnt/dm-3`, `/mnt/dm-5` (16 TB HDD) and `/mnt/dm-4` (3.5 TB SATA SSD,
+  **100% full**) are not writable by us (group 1011).
 
 **Storage plan for REAL-Colon (decided 2026-10-21)**
 | What | Where | Size |
 |---|---|---|
 | Original frames | NAS, read-only | ~296 KB/frame; ~285 GB val + test |
-| Frame cache (section 7) | Local disk once granted (dm-4 SSD or dm-3 HDD), else NAS | ~68 KB/frame; ~65 GB val + test |
-| Predictions (section 8) | NAS now, symlinked as `artifacts/predictions/realcolon_<split>` | ≤7-9 GB per run; ≤350-450 GB for ~50 runs |
-| Backup of predictions | Local disk once granted (rsync) | same |
+| Frame cache (section 7) | `/mnt/dm-3/taishi/realcolon-cache` (local) | ~68 KB/frame; ~65 GB val + test |
+| Predictions (section 8) | NAS, symlinked as `artifacts/predictions/realcolon_<split>` | ≤7-9 GB per run; ≤350-450 GB for ~50 runs |
+| Backup of predictions | `/mnt/dm-3/taishi/polypbench-artifacts` (rsync after each run) | same |
 | Metrics, results, checkpoints | `artifacts/` (local) | small |
 
 Local disk is for speed and a second copy, not capacity: the NAS has ~51 TB free.
+
+**Links (created 2026-10-21).** Code only sees `data_root` and `artifacts_root`; these symlinks
+decide where things physically live, so moving storage never needs a code change.
+| Link | Target |
+|---|---|
+| `~/data/REAL-Colon` | `/sld-shared/home/tn23794/realcolon` |
+| `~/data/REAL-Colon-cache` | `/mnt/dm-3/taishi/realcolon-cache` |
+| `artifacts/predictions/realcolon_{val,test}` | `/sld-shared/home/tn23794/polypbench-artifacts/predictions/realcolon_{val,test}` |
+
+These links live outside git (in `data_root` and the `artifacts/` sibling), so this table is
+their only record; recreate them with `ln -sn <target> <link>` on a new machine.
+
+Backup after each REAL-Colon run:
+```
+rsync -a /sld-shared/home/tn23794/polypbench-artifacts/ /mnt/dm-3/taishi/polypbench-artifacts/
+```
 - Run long jobs in `tmux`. Do not run two `realcolon_subset.py frames` processes on the same
   `--out` with an old script version (fixed in the current version, but avoid anyway).
 
@@ -130,6 +152,11 @@ Source: Biffi et al., *Sci Data* 2024 (arXiv 2403.02163); Figshare article 22202
   (the resection site is a negative).
 - Known quirk: **003-012 has 3 annotated lesions but `video_info.csv` lists 2** (only mismatch
   in the dataset). One lesion likely lacks size/histology. Note it in the data section.
+- Known quirk: **001-012 names its frame and annotation files `001-012_<frame>.0.jpg/.xml`**
+  (all other downloaded videos: `<video>_<frame>.jpg`). Recorded as `float_frame_names` in
+  `configs/datasets/realcolon.yaml`; recheck once the train split is complete.
+- Frame ids are 0-based and contiguous (checked on all val/test videos by `tests/test_realcolon.py`).
+- In-patient ranges are inclusive `[first, last]`: the test ranges sum to exactly 572,085.
 - Some frames show a solid blue rounded rectangle (likely an on-screen-information redaction);
   decided to treat as an occluder and not mask it.
 
@@ -251,7 +278,10 @@ numbers to TRUE-Colon's.
 **Running models**
 - Preprocess exactly as in SUN-SEG training (resize + normalization). Frames are already
   cropped to the field of view; do not crop further.
-- One continuous pass per video, frame by frame, **past frames only**.
+- One continuous pass per video, frame by frame, **past frames only**, **starting at frame 0**
+  (including out-of-patient footage, as deployed; decided 2026-10-21). In-patient trimming is
+  applied only at evaluation, so one pass serves both the main and the all-frames results.
+  Differs from TRUE-Colon (trimmed before inference); matters only for memory/anchor models.
 - Memory models (SALI): reset only at video start.
 - Window models (PNS+, STDDNet, Diff-VPS, LGRNet): predict frame *t* from the window ending at *t* (one forward pass per frame).
 - Anchor models: anchor = first frame of the evaluated procedure (realistic). Rolling anchor as an ablation.
@@ -415,8 +445,6 @@ size, histology, latency-exclusion flag.
 - Whether to use in-house clinical videos (limited, curated) and in what role (external curated test set).
 - Final title wording (detection vs detection and segmentation).
 - Seeds in the `model_id` tag (e.g. `emcad-b2@sunseg-s1`)? Needed before multi-seed REAL-Colon runs.
-- Start inference at frame 0 of each video (realistic; one pass serves both in-patient and
-  all-frames results) or at the in-patient start (as TRUE-Colon)? Matters only for memory models.
 
 ---
 

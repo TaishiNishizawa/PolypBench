@@ -9,4 +9,8 @@ def load_dataset(name):
         from polypbench.data.sunseg import SPLITS, load_sunseg
         if name in SPLITS:
             return load_sunseg(name)
+    if name.startswith("realcolon_"):
+        from polypbench.data.realcolon import SPLITS, load_realcolon
+        if name in SPLITS:
+            return load_realcolon(name)
     raise ValueError(f"Unknown dataset '{name}'")

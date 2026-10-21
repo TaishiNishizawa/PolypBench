@@ -58,11 +58,17 @@ def main():
     model = load_sali(config)
     transform = build_transform(config)
 
+    full_res = predictions.storage_format(dataset.name) == "png"   # npz keeps SALI's 352x352 output
     started = datetime.now().isoformat(timespec="seconds")
     for seq in dataset:
+        if not args.overwrite and predictions.sequence_complete(dataset.name, model_id, POSTPROC, seq.name):
+            print(f"[skip] {model_id} {seq.name}: already complete")
+            continue
         t0 = time.time()
-        for idx, prob in predict_sequence(model, seq, transform, config["mem_freq"], config["partner"]):
-            predictions.write_prediction(predictions.frame_path(dataset.name, model_id, POSTPROC, seq.name, idx), prob)
+        writer = predictions.open_sequence(dataset.name, model_id, POSTPROC, seq.name)
+        for idx, prob in predict_sequence(model, seq, transform, config["mem_freq"], config["partner"], full_res):
+            writer.write(idx, prob)
+        writer.close()
         dt = time.time() - t0
         print(f"[{model_id}] {seq.name}: {seq.n_frames} frames in {dt:.1f}s ({seq.n_frames / dt:.1f} fps)")
 
@@ -73,6 +79,7 @@ def main():
         "model_id": model_id,
         "postproc": POSTPROC,
         "model_config": config,
+        "storage": predictions.storage_format(dataset.name),
         "sequences": {seq.name: seq.n_frames for seq in dataset},
         "device": torch.cuda.get_device_name(0),
         "torch": torch.__version__,

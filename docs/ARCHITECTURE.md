@@ -127,8 +127,9 @@ means touching every stage.
    single-channel `uint8` probability map (0–255, raw sigmoid, never min-max
    normalized), one per frame, under
    `artifacts/predictions/<dataset>/<model_id>/<postproc>/<sequence>/`, with a
-   `run.json` alongside. Only `io/predictions.py` reads or writes them; callers
-   read and write a sequence through it and never build file paths.
+   `run.json` alongside. Only `io/predictions.py` reads or writes them. Writers
+   use `open_sequence(...)`, which picks the format; PNGs are read per frame
+   (`read_prediction(frame_path(...))`), npz per sequence (`read_sequence(...)`).
    Probabilities are saved, not binary masks, so threshold-sweep metrics stay
    possible. The encoding depends on the dataset's size:
    - **In-house, SUN-SEG:** one PNG per frame, `<frame:06d>.png`, at the
@@ -225,6 +226,23 @@ changes.
   results exactly.
 - Before using a third-party model on in-house data, reproduce its published
   SUN-SEG numbers with its official checkpoint.
+
+### REAL-Colon (`configs/datasets/realcolon.yaml`)
+
+- 60 full, unedited procedures (4 cohorts × 15). Official split per cohort:
+  videos 1-10 train, 11-12 val, 13-15 test, loaded as `realcolon_train`,
+  `realcolon_val`, `realcolon_test`; one sequence per video (e.g. `001-013`).
+- Sequences cover **every frame from 0**, including footage outside the
+  patient. The TRUE-Colon in-patient ranges (in the config) are applied only
+  at evaluation, via `inside_patient(video)`.
+- Frame rate varies per video (25 / 29.97 / 60 fps) and comes from
+  `video_info.csv`; frame size varies per video too.
+- Ground truth is boxes (per-frame Pascal-VOC XML), not masks, so sequences
+  have no mask annotations; box ground truth is built separately for the
+  detection evaluation.
+- Frames live on the lab NAS, reached through the `<data_root>/REAL-Colon`
+  symlink (see [Paths](#paths)). Download tools and background are in
+  `Paper_Progress.md`.
 
 ## How to add…
 

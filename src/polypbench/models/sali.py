@@ -75,8 +75,12 @@ def with_partner(frames, partner):
 
 
 @torch.no_grad()
-def predict_sequence(model, seq, transform, mem_freq, partner):
-    """Yield (index, probability map at frame size) for every frame of `seq`."""
+def predict_sequence(model, seq, transform, mem_freq, partner, full_res=True):
+    """Yield (index, probability map) for every frame of `seq`.
+
+    full_res: upsample the logits to the frame size before the sigmoid (for
+    PNG predictions and Dice); False keeps SALI's own output size (352x352).
+    """
     model.mem_bank.clear_memory()
     for idx, rgb, other in with_partner(seq.frames(), partner):
         images = [transform(Image.fromarray(img)).unsqueeze(0).cuda() for img in (rgb, other)]
@@ -86,5 +90,7 @@ def predict_sequence(model, seq, transform, mem_freq, partner):
             out = model(images, [idx], mode="val", use_mem=True, add_mem=True)
         else:
             out = model(images, [idx], mode="val", use_mem=True, add_mem=False)
-        logits = F.interpolate(out[-1], size=rgb.shape[:2], mode="bilinear", align_corners=False)
+        logits = out[-1]
+        if full_res:
+            logits = F.interpolate(logits, size=rgb.shape[:2], mode="bilinear", align_corners=False)
         yield idx, logits.sigmoid().squeeze().cpu().numpy()

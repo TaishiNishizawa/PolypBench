@@ -2,8 +2,10 @@
 
 Each model runs once per sequence; every requested post-processing variant is
 applied to that same model output and saved separately (see
-polypbench/io/predictions.py for the layout). Runs whose run.json already
-exists are skipped unless --overwrite is given.
+polypbench/io/predictions.py for the layout: PNGs at frame resolution, or npz
+chunks at model resolution for REAL-Colon). Runs whose run.json already
+exists are skipped unless --overwrite is given; for REAL-Colon, finished
+sequences of an interrupted run are skipped too.
 
 Usage:
     python scripts/predict.py --dataset inhouse --models sacnet-b2@colondb
@@ -45,18 +47,23 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads):
     started = datetime.now().isoformat(timespec="seconds")
 
     for seq in dataset:
+        names = [n for n in todo if overwrite or not predictions.sequence_complete(dataset.name, model_id, n, seq.name)]
+        if not names:
+            print(f"[skip] {model_id} {seq.name}: already complete")
+            continue
         t0 = time.time()
-        for post in postprocs.values():
-            if post is not None:
-                post.reset()
+        for name in names:
+            if postprocs[name] is not None:
+                postprocs[name].reset()
+        writers = {name: predictions.open_sequence(dataset.name, model_id, name, seq.name) for name in names}
         for idx, rgb in seq.frames():
             prob = model.predict(rgb)
-            h, w = rgb.shape[:2]
-            for name, post in postprocs.items():
+            for name in names:
+                post = postprocs[name]
                 out = prob if post is None else post(prob, rgb)
-                out_full = cv2.resize(out, (w, h), interpolation=cv2.INTER_LINEAR)
-                predictions.write_prediction(
-                    predictions.frame_path(dataset.name, model_id, name, seq.name, idx), out_full)
+                writers[name].write(idx, out, rgb.shape[:2])   # png: resized to the frame; npz: kept as is
+        for writer in writers.values():
+            writer.close()
         dt = time.time() - t0
         print(f"[{model_id}] {seq.name}: {seq.n_frames} frames in {dt:.1f}s ({seq.n_frames / dt:.1f} fps)")
 
@@ -67,6 +74,7 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads):
             "postproc": name,
             "model_config": load_model_config(model_id),
             "postproc_config": load_postproc_config(name),
+            "storage": predictions.storage_format(dataset.name),
             "sequences": {seq.name: seq.n_frames for seq in dataset},
             "providers": model.providers,
             "git_commit": git_commit(),
