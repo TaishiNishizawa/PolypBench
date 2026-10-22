@@ -241,7 +241,13 @@ changes.
   have no mask annotations; box ground truth is built separately for the
   detection evaluation.
 - Frames live on the lab NAS, reached through the `<data_root>/REAL-Colon`
-  symlink (see [Paths](#paths)). Download tools and background are in
+  symlink (see [Paths](#paths)). Models read a smaller copy instead (640 px
+  long side, every frame, aspect kept), built once by
+  `scripts/build_realcolon_cache.py` into `<data_root>/REAL-Colon-cache`. The
+  loader uses the cache by default (`frames_from` in the config) and fails if
+  a video isn't fully cached; `load_realcolon(name, source="original")` reads
+  the NAS originals. The cache doesn't set the model input: each model's own
+  preprocessing starts from it. Download tools and background are in
   `Paper_Progress.md`.
 
 ## How to add…

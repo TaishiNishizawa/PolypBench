@@ -3,6 +3,18 @@ root: REAL-Colon               # relative to data_root; a symlink to the NAS cop
 frames_dir: frames             # <root>/frames/<video>_frames/<video>_<frame>.jpg
 video_info: video_info.csv     # organizers' per-video metadata: fps, num_frames, endoscope_brand
 
+# Models read a smaller copy of every frame (scripts/build_realcolon_cache.py):
+# <data_root>/<cache.root>/L<long_side>/<video>/<frame:06d>.jpg, plus
+# <video>/done.json (frame count, original and cached size). Same frames, same
+# ids, same aspect ratio (no crop or pad), every frame kept; only smaller.
+# Each model's own preprocessing (e.g. stretch to 352x352, as in SUN-SEG
+# training) starts from these, so the cache doesn't set the model input.
+frames_from: cache             # cache | original
+cache:
+  root: REAL-Colon-cache       # relative to data_root; a symlink to /mnt/dm-3/taishi/realcolon-cache
+  long_side: 640               # >= every model input; TRUE-Colon's 640x640 letterbox then needs no resampling
+  jpeg_quality: 95             # with 4:4:4 chroma (no colour subsampling)
+
 # 60 full procedures, 4 cohorts x 15 videos (001 US, 002 Italy, 003 Austria,
 # 004 Japan). Frame ids are 0-based and contiguous (0 .. num_frames-1), so a
 # frame's id is its index. Frame rate varies per video (25, 29.97 or 60 fps):

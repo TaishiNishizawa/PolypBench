@@ -84,7 +84,7 @@ limitations section names temporal models and more lesions as open; we cover bot
 | What | Where | Size |
 |---|---|---|
 | Original frames | NAS, read-only | ~296 KB/frame; ~285 GB val + test |
-| Frame cache (section 7) | `/mnt/dm-3/taishi/realcolon-cache` (local) | ~68 KB/frame; ~65 GB val + test |
+| Frame cache (section 7) | `/mnt/dm-3/taishi/realcolon-cache/L640` (local) | ~140 KB/frame; 134 GB val + test (built) |
 | Predictions (section 8) | NAS, symlinked as `artifacts/predictions/realcolon_<split>` | ≤7-9 GB per run; ≤350-450 GB for ~50 runs |
 | Backup of predictions | `/mnt/dm-3/taishi/polypbench-artifacts` (rsync after each run) | same |
 | Metrics, results, checkpoints | `artifacts/` (local) | small |
@@ -289,10 +289,18 @@ numbers to TRUE-Colon's.
   separately with their built-in lookahead delay.
 - **Save raw probability maps, no normalization** (format: section 8). All box extraction,
   thresholds and metrics are computed offline from the saved maps, so models never need re-running for scoring changes.
-- I/O: one pass over the NAS frames to write a downscaled cache of the input frames (JPEG q95,
-  512 px long side, aspect kept; ≥ every model's input size) and run all models from the cache.
-  Measured on 001-013: original 1352×1080 JPEG 296 KB, 6.6 ms decode; cached 68 KB, 1.3 ms decode.
-  The cache adds one extra resize (original → 512 → model input); on the pilot, check that
+- I/O: one pass over the NAS frames (`scripts/build_realcolon_cache.py`) writes a smaller copy
+  of every frame and all models run from it. Decided 2026-10-21: **640 px long side** (INTER_AREA,
+  aspect kept, no crop or pad, every frame, ids and fps unchanged), JPEG q95 with **4:4:4 chroma**
+  (4:2:0 would store colour at 320 px, below the 352 model input). The cache does not set the
+  model input: each model's own preprocessing (stretch to 352×352 for ours, as in SUN-SEG
+  training) starts from it. 640 is ≥ every planned model input and equals TRUE-Colon's 640×640
+  letterbox, so the reference detectors can be run exactly as TRUE-Colon did (pad only, no
+  resampling). We do not letterbox our segmentation models: SUN-SEG training never padded.
+  Measured on 001-013: original 1352×1080 JPEG 296 KB, 6.6 ms decode; cached 640×511 121 KB,
+  2.3 ms decode; ~117 GB for val + test. The NAS is latency-bound (~65 ms per file read), so the
+  builder reads ahead in threads.
+  The cache adds one extra resize (original → 640 → model input); on the pilot, check that
   predictions from the cache match predictions from the originals.
 
 **Mask → boxes** (offline)
@@ -402,13 +410,43 @@ size, histology, latency-exclusion flag.
 ## 11. TODO (tiered)
 
 ### Tier 0: this week (pipeline end to end on a pilot)
-- [ ] Check the train-split download finishes; run `verify --splits train`.
-- [ ] Write `build_gt.py` (val + test; in-patient flags; phase labels; lesion table).
-- [ ] Write `evaluate.py` (maps → boxes → frame / lesion metrics, curves, breakdowns); cross-check against `true-colon` on shared metrics.
-- [ ] Write runners for **EMCAD** and **SALI** (causal + as-released) in the section 8 format.
+Build order agreed 2026-10-21 (steps 0-6). Each step is tested before the next.
+
+Done:
+- [x] **Step 0, storage + links:** `/mnt/dm-3/taishi` granted; symlinks for data, cache and
+  predictions (section 3).
+- [x] **Step 1, dataset:** `configs/datasets/realcolon.yaml` + `data/realcolon.py`
+  (`realcolon_{train,val,test}`, every frame from 0, per-video fps, `inside_patient()`);
+  `tests/test_realcolon.py`. Found: 001-012 `.0` file names; in-patient ranges inclusive (sum 572,085).
+- [x] **Step 2, prediction I/O:** npz chunks at model output resolution for REAL-Colon, PNG
+  unchanged for in-house / SUN-SEG (byte-identical regression check); `tests/test_predictions.py`.
+  Committed as `2b198df` (submodules PraNet, Polyp-PVT, VPS: `1d5b763`).
+- [x] **Step 3, frame cache:** `scripts/build_realcolon_cache.py` (640 px, q95 4:4:4, NAS
+  read-ahead); loader reads the cache by default. All 20 val + test videos cached 2026-10-21
+  (962,816 frames, 134 GB, 79 min + 6 min trial); all tests pass. Fidelity vs resized
+  originals depends on sensor grain: PSNR 46-49 dB on clean videos, ~40 dB on 004-014, ~38 dB
+  on 004-012 (grainiest, cohort 004); the test requires ≥ 35 dB (a wrong frame scores ~27 dB).
+
+Next:
+- [ ] **Step 4, pilot inference on one video:** add `--sequences` to `predict.py` /
+  `predict_sali.py`; run EMCAD and causal SALI on 001-013. Record fps (decides total GPU time;
+  SALI ~7.5 fps would be ~36 h per val + test pass), npz size per frame, and cache vs original
+  agreement (predictions from cache vs originals on a few thousand frames). Include a grainy
+  cohort-004 video (e.g. 004-013) in the agreement check: JPEG loss is largest there.
+- [ ] **Step 5, ground truth:** `build_realcolon_gt.py` (section 9 tables: per-frame boxes in
+  original pixels with `unique_id`, image size, in-patient flag, phase; per-lesion table).
+  Read XML from the annotation archives; mind 001-012's `.0` names.
+- [ ] **Step 6, evaluation:** `metrics/detection.py` + `evaluate_detection.py` (maps → boxes
+  scaled by each video's original size → frame / lesion metrics, curves, breakdowns);
+  cross-check against `true-colon` on shared metrics.
 - [ ] Pilot on 001-013, 001-014, 002-014, 003-013, 004-014 (4 cohorts, 12 lesions, 1 polyp-free video).
 - [ ] Visual sanity check: overlay predicted vs GT boxes on onset and post-removal frames (`make_clip.py` extension).
+- [ ] As-released (next-frame) SALI on REAL-Colon, alongside causal.
+- [ ] Check the train-split download finishes; run `verify --splits train`; recheck
+  `float_frame_names` on the new videos.
 - [ ] Audit our lab models' SUN-SEG evaluation: checkpoint chosen on val? min-max normalization removed?
+
+Open decisions to settle before multi-seed runs: seeds in `model_id` tag (section 12).
 
 ### Tier 1: next 2-3 weeks (models)
 - [ ] Clone and train remaining models on SUN-SEG under the section 6 protocol (3 seeds): PraNet, Polyp-PVT, SAM2-UNet, nnU-Net, PNS+, FLA-Net, LGRNet, Diff-VPS, STDDNet, CMSA-Net; detectors YOLOv11-M, RT-DETR.

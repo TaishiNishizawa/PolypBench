@@ -8,10 +8,11 @@ They cover val and test only; train is checked once its download finishes
 import os
 
 import cv2
+import numpy as np
 import pytest
 
-from polypbench.data import load_dataset
-from polypbench.data.realcolon import frame_path, inside_patient, load_realcolon_config, load_video_info
+from polypbench.data.realcolon import (cache_dir, cache_info, frame_path, inside_patient, load_realcolon,
+                                       load_realcolon_config, load_video_info)
 
 EVAL_SPLITS = ["realcolon_val", "realcolon_test"]
 
@@ -28,7 +29,7 @@ def info(config):
 
 @pytest.fixture(scope="module", params=EVAL_SPLITS)
 def dataset(request):
-    return load_dataset(request.param)
+    return load_realcolon(request.param, source="original")
 
 
 def test_splits_follow_official_rule(config, info):
@@ -65,7 +66,7 @@ def test_frame_totals(dataset):
 
 
 def test_fps_per_video():
-    dataset = load_dataset("realcolon_val")
+    dataset = load_realcolon("realcolon_val", source="original")
     assert dataset["001-012"].fps == 60.0          # 001-001 .. 001-012 were recorded at 60 fps
     assert dataset["003-011"].fps == 25.0
     assert dataset["004-011"].fps == 29.97
@@ -88,3 +89,41 @@ def test_first_and_last_frame_readable(dataset):
         assert idx == 0 and rgb.ndim == 3 and rgb.shape[2] == 3, seq.name
         assert seq.frame_paths[-1] == frame_path(seq.name, seq.n_frames - 1)
         assert cv2.imread(str(seq.frame_paths[-1])) is not None, seq.name
+
+
+def cached_videos(config, info):
+    videos = [v for s in ("val", "test") for v in config["splits"][s]
+              if (cache_info(v, config) or {}).get("n_frames") == int(info[v]["num_frames"])]
+    if not videos:
+        pytest.skip("no video cached yet (scripts/build_realcolon_cache.py)")
+    return videos
+
+
+def test_cache_complete_and_sized(config, info):
+    """Every cached video has all its frames, long side = cache.long_side, original aspect ratio."""
+    long_side = config["cache"]["long_side"]
+    for video in cached_videos(config, info):
+        cached = cache_info(video, config)
+        files = [f for f in os.listdir(cache_dir(video, config)) if f.endswith(".jpg")]
+        assert len(files) == cached["n_frames"], video
+        (w0, h0), (w, h) = cached["original_wh"], cached["cached_wh"]
+        assert max(w, h) == min(long_side, max(w0, h0)), video
+        assert abs(w / h - w0 / h0) < 0.01, video
+        first = cv2.imread(str(cache_dir(video, config) / "000000.jpg"))
+        assert first.shape[:2] == (h, w), video
+
+
+def test_cache_matches_originals(config, info):
+    """A cached frame is its original, resized: PSNR >= 35 dB.
+
+    JPEG loss grows with sensor grain: 46-49 dB on clean videos, ~38 dB on the
+    grainiest (004-012). The wrong frame (even the next one) scores ~27 dB.
+    """
+    for video in cached_videos(config, info):
+        n = int(info[video]["num_frames"])
+        for idx in (0, n // 2, n - 1):
+            cached = cv2.imread(str(cache_dir(video, config) / f"{idx:06d}.jpg")).astype("float32")
+            original = cv2.imread(str(frame_path(video, idx, config)))
+            original = cv2.resize(original, cached.shape[1::-1], interpolation=cv2.INTER_AREA).astype("float32")
+            psnr = 10 * np.log10(255.0 ** 2 / np.mean((cached - original) ** 2))
+            assert psnr >= 35.0, f"{video} frame {idx}: PSNR {psnr:.1f} dB"

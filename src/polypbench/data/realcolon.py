@@ -5,6 +5,11 @@ realcolon_test. One sequence per video, named by its id (e.g. 001-013),
 covering every frame from 0, including frames outside the patient; in-patient
 trimming is applied at evaluation (see inside_patient).
 
+Frames come from the cache (a smaller copy built by
+scripts/build_realcolon_cache.py) or the originals on the NAS: `frames_from`
+in the config, or the `source` argument. Loading from the cache fails if a
+video isn't fully cached, so a run never mixes the two.
+
 Frame paths are built from num_frames in video_info.csv instead of listing
 the folders: frame ids are 0-based and contiguous, and listing ~1M files over
 NFS is slow. A missing frame raises when it is read (tests/test_realcolon.py
@@ -18,6 +23,7 @@ Usage:
 """
 
 import csv
+import json
 
 import yaml
 
@@ -57,12 +63,42 @@ def frame_path(video, index, config=None):
     return DATA_ROOT / config["root"] / config["frames_dir"] / f"{video}_frames" / f"{video}_{index}{suffix}.jpg"
 
 
-def load_realcolon(name):
+def cache_dir(video, config=None):
+    config = config or load_realcolon_config()
+    cache = config["cache"]
+    return DATA_ROOT / cache["root"] / f"L{cache['long_side']}" / video
+
+
+def cached_frame_path(video, index, config=None):
+    return cache_dir(video, config) / f"{index:06d}.jpg"
+
+
+def cache_info(video, config=None):
+    """The cache's done.json for `video` (n_frames, original_wh, cached_wh, ...), or None if not cached."""
+    path = cache_dir(video, config) / "done.json"
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
+def load_realcolon(name, source=None):
+    """source: "cache" or "original" frames (default: frames_from in the config)."""
     config = load_realcolon_config()
+    source = source or config["frames_from"]
+    if source not in ("cache", "original"):
+        raise ValueError(f"source must be 'cache' or 'original', got '{source}'")
     info = load_video_info(config)
     sequences = []
     for video in config["splits"][SPLITS[name]]:
         n_frames = int(info[video]["num_frames"])
-        frames = [frame_path(video, i, config) for i in range(n_frames)]
+        if source == "cache":
+            cached = cache_info(video, config)
+            if cached is None or cached["n_frames"] != n_frames:
+                raise FileNotFoundError(f"{video} isn't (fully) cached at {cache_dir(video, config)}: "
+                                        f"run scripts/build_realcolon_cache.py")
+            frames = [cached_frame_path(video, i, config) for i in range(n_frames)]
+        else:
+            frames = [frame_path(video, i, config) for i in range(n_frames)]
         sequences.append(FrameFolderSequence(video, frames, float(info[video]["fps"]), annotations={}))
     return Dataset(name, sequences)
