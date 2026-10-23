@@ -80,3 +80,23 @@ def test_png_writer_resizes_to_frame():
     assert not predictions.sequence_complete(*PNG)      # png runs are tracked as a whole (run.json)
     with pytest.raises(ValueError):
         list(predictions.read_sequence(*PNG))
+
+
+def test_run_finished_npz_counts_earlier_sequences():
+    """A --sequences run marks the run complete only once every sequence has its done.json."""
+    names = ["001-013", "001-014"]
+    assert not predictions.run_finished("realcolon_test", "m@x", "none", names, ["001-013"])
+    for name in names:
+        writer = predictions.open_sequence("realcolon_test", "m@x", "none", name)
+        writer.write(0, maps(1)[0])
+        if name == "001-013":
+            writer.close()
+    assert not predictions.run_finished("realcolon_test", "m@x", "none", names, ["001-014"])   # 001-014 unclosed
+    predictions.open_sequence("realcolon_test", "m@x", "none", "001-014").close()
+    assert predictions.run_finished("realcolon_test", "m@x", "none", names, ["001-014"])
+
+
+def test_run_finished_png_needs_every_sequence_this_run():
+    names = ["a", "b"]
+    assert not predictions.run_finished("inhouse", "m@x", "none", names, ["a"])
+    assert predictions.run_finished("inhouse", "m@x", "none", names, ["a", "b"])

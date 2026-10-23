@@ -62,9 +62,14 @@ def load_sunseg_split(split, name, clips=None, exclude=()):
     return Dataset(name, sequences)
 
 
-def load_sunseg_train_val():
-    """TrainDataset as (train, val) Datasets: val = the held-out val_clips, train = the rest."""
+def load_sunseg_train_val(val_split):
+    """(train, val) Datasets for a recipe's val_split: "heldout" = TrainDataset minus val_clips / val_clips;
+    a SUN-SEG test split (e.g. TestHardDataset/Seen) = all of TrainDataset / that split."""
     cfg = load_sunseg_config()
-    val_clips = set(cfg["val_clips"])
-    return (load_sunseg_split(cfg["train_split"], "sunseg_train", exclude=val_clips),
-            load_sunseg_split(cfg["train_split"], "sunseg_val", clips=val_clips))
+    if val_split == "heldout":
+        val_clips = set(cfg["val_clips"])
+        return (load_sunseg_split(cfg["train_split"], "sunseg_train", exclude=val_clips),
+                load_sunseg_split(cfg["train_split"], "sunseg_val", clips=val_clips))
+    if val_split not in cfg["test_splits"]:
+        raise ValueError(f"val_split must be 'heldout' or one of {cfg['test_splits']}, got '{val_split}'")
+    return load_sunseg_split(cfg["train_split"], "sunseg_train"), load_sunseg_split(val_split, "sunseg_val")

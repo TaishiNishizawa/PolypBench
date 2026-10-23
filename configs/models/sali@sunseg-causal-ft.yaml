@@ -1,0 +1,31 @@
+model_id: sali@sunseg-causal-ft
+arch: sali
+backend: external          # runs in its own env: conda activate sali; python scripts/predict_sali.py
+env: envs/sali.yml
+code: third_party/SALI     # submodule, pinned to our fork (PyTorch 2 build fix); model code unchanged
+weights: checkpoints/sali@sunseg-causal-ft/best.pth   # relative to artifacts_root; written by scripts/train_sali.py
+source: >-
+  SALI retrained by us on all of SUN-SEG TrainDataset (best epoch chosen on
+  TestHardDataset/Seen) with scripts/train_sali.py and configs/train/sali_ft.yaml, pairing each
+  frame with the PREVIOUS frame instead of the next one.
+input_size: 352
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+mem_freq: 5                # add to the long-term memory bank every 5 frames (SALI default)
+partner: prev              # frame i is segmented with frame i-1; frame 0 with itself
+notes: >-
+  Causal SALI, as the paper describes it (Sec. 2.1: "sees no future frames,
+  conditioning on the previous frame"). SALI's released code pairs frame i with
+  frame i+1 (inherited from SLT-Net's loader), so sali@sunseg is not causal.
+  Same architecture and recipe as the paper; only the frame pairing differs.
+
+# Seed runs: <model_id>-s<N> (e.g. sali@sunseg-causal-ft-s0), one checkpoint folder each.
+
+train:
+  recipe: sali_ft                 # configs/train/sali_ft.yaml (default for scripts/train_sali.py)
+  pretrained_backbone: checkpoints/pretrained/pvt_v2_b5.pth   # ImageNet PVTv2-b5 (whai362/PVT release v2), loaded into the encoder
+  pretrained_sha256: d5c381730c305a9b9d411c2ec9768fb40e922298ecdb4bfe0a606ccd12af0225
+  # ImageNet initialization, as the paper states and as our lab's models use.
+  # SALI's README links a different "pvt_v2_b5.pth": a trained image
+  # segmentation model (encoder + decoder, sha256 3148a2b5...) of unknown
+  # training data. Not used: everything after the encoder starts from random.

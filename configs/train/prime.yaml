@@ -5,7 +5,8 @@
 # PVT-CASCADE on the Unseen splits. Unlike CASCADE's script, the best epoch is
 # still chosen on our held-out validation videos, never on a test split.
 name: prime
-dataset: sunseg               # configs/datasets/sunseg.yaml: TrainDataset minus val_clips
+dataset: sunseg               # configs/datasets/sunseg.yaml
+val_split: heldout            # train on TrainDataset minus val_clips, select the epoch on val_clips
 
 epochs: 30
 batch_size: 16

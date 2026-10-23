@@ -175,9 +175,10 @@ resolve against the repo root. The environment variables
 single run. Code imports the resolved values from `polypbench.paths` and never
 hardcodes a path. Dataset configs give their `root` relative to `data_root`.
 
-Data or outputs too large for the local disk (REAL-Colon frames and
-predictions) live on the lab NAS and are linked in with symlinks, e.g.
-`<data_root>/REAL-Colon` and `artifacts/predictions/realcolon_<split>`. Moving
+Data or outputs too large for the system disk (REAL-Colon frames on the lab
+NAS; the frame cache and REAL-Colon predictions on a local data disk) are
+linked in with symlinks, e.g. `<data_root>/REAL-Colon`,
+`<data_root>/REAL-Colon-cache` and `artifacts/predictions/realcolon_<split>`. Moving
 them later only means moving the folder and repointing the link; no code
 changes.
 
@@ -241,14 +242,13 @@ changes.
   have no mask annotations; box ground truth is built separately for the
   detection evaluation.
 - Frames live on the lab NAS, reached through the `<data_root>/REAL-Colon`
-  symlink (see [Paths](#paths)). Models read a smaller copy instead (640 px
-  long side, every frame, aspect kept), built once by
-  `scripts/build_realcolon_cache.py` into `<data_root>/REAL-Colon-cache`. The
-  loader uses the cache by default (`frames_from` in the config) and fails if
-  a video isn't fully cached; `load_realcolon(name, source="original")` reads
-  the NAS originals. The cache doesn't set the model input: each model's own
-  preprocessing starts from it. Download tools and background are in
-  `Paper_Progress.md`.
+  symlink (see [Paths](#paths)), with a local copy of val + test. **Models
+  read the original frames** (`frames_from: original`), so each model's own
+  training resize starts from the same kind of pixels as on SUN-SEG. A 640 px
+  copy (`scripts/build_realcolon_cache.py`, `<data_root>/REAL-Colon-cache`,
+  `load_realcolon(name, source="cache")`) exists for visualization but is not
+  used for inference: its extra resize step measurably changed EMCAD's masks.
+  Download tools and background are in `Paper_Progress.md`.
 
 ## How to add…
 

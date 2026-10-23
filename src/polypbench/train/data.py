@@ -1,7 +1,7 @@
 """Frame-level SUN-SEG data for training image segmentation models.
 
-Each item is one (frame, mask) pair; clip membership only decides train vs
-validation (see configs/datasets/sunseg.yaml). Augmentation and mask handling
+Each item is one (frame, mask) pair; the recipe's val_split decides train vs
+validation (see train_val_pairs). Augmentation and mask handling
 follow utils/dataloader_polyp.py of EMCAD / MK-UNet / SACNet.
 """
 
@@ -34,12 +34,16 @@ def sunseg_pairs(split, clips=None, exclude=()):
     return pairs
 
 
-def train_val_pairs():
+def train_val_pairs(val_split):
+    """(train, val) pairs for a recipe's val_split: "heldout" = TrainDataset minus val_clips / val_clips;
+    a SUN-SEG test split (e.g. TestHardDataset/Seen) = all of TrainDataset / that split."""
     cfg = load_sunseg_config()
-    val_clips = set(cfg["val_clips"])
-    train = sunseg_pairs(cfg["train_split"], exclude=val_clips)
-    val = sunseg_pairs(cfg["train_split"], clips=val_clips)
-    return train, val
+    if val_split == "heldout":
+        val_clips = set(cfg["val_clips"])
+        return sunseg_pairs(cfg["train_split"], exclude=val_clips), sunseg_pairs(cfg["train_split"], clips=val_clips)
+    if val_split not in cfg["test_splits"]:
+        raise ValueError(f"val_split must be 'heldout' or one of {cfg['test_splits']}, got '{val_split}'")
+    return sunseg_pairs(cfg["train_split"]), sunseg_pairs(val_split)
 
 
 def build_transform(recipe, train):

@@ -83,10 +83,14 @@ limitations section names temporal models and more lesions as open; we cover bot
 **Storage plan for REAL-Colon (decided 2026-10-21)**
 | What | Where | Size |
 |---|---|---|
-| Original frames | NAS, read-only | ~296 KB/frame; ~285 GB val + test |
+| Original frames | NAS, read-only (all 60 videos) | ~296 KB/frame; ~285 GB val + test |
+| Local copy of originals (what models read) | `/mnt/dm-3/taishi/realcolon` (val + test frames, all metadata and annotations); `~/data/REAL-Colon` points here | ~285 GB |
 | Frame cache (section 7) | `/mnt/dm-3/taishi/realcolon-cache/L640` (local) | ~140 KB/frame; 134 GB val + test (built) |
-| Predictions (section 8) | NAS, symlinked as `artifacts/predictions/realcolon_<split>` | ≤7-9 GB per run; ≤350-450 GB for ~50 runs |
-| Backup of predictions | `/mnt/dm-3/taishi/polypbench-artifacts` (rsync after each run) | same |
+| Predictions (section 8) | `/mnt/dm-3/taishi/polypbench-artifacts/predictions` (local), symlinked as `artifacts/predictions/realcolon_<split>` | ≤7-9 GB per run; ≤350-450 GB for ~50 runs |
+| Backup of predictions | NAS `/sld-shared/home/tn23794/polypbench-artifacts` (rsync after each run) | same |
+
+Predictions moved to dm-3 as the main copy on 2026-10-22 (before any were written): same
+inference speed, but every rescoring reads them all back (~2x faster from local disk).
 | Metrics, results, checkpoints | `artifacts/` (local) | small |
 
 Local disk is for speed and a second copy, not capacity: the NAS has ~51 TB free.
@@ -95,16 +99,16 @@ Local disk is for speed and a second copy, not capacity: the NAS has ~51 TB free
 decide where things physically live, so moving storage never needs a code change.
 | Link | Target |
 |---|---|
-| `~/data/REAL-Colon` | `/sld-shared/home/tn23794/realcolon` |
+| `~/data/REAL-Colon` | `/mnt/dm-3/taishi/realcolon` (local copy, 2026-10-22: val + test frames, all metadata and annotations; train frames only on the NAS at `/sld-shared/home/tn23794/realcolon`) |
 | `~/data/REAL-Colon-cache` | `/mnt/dm-3/taishi/realcolon-cache` |
-| `artifacts/predictions/realcolon_{val,test}` | `/sld-shared/home/tn23794/polypbench-artifacts/predictions/realcolon_{val,test}` |
+| `artifacts/predictions/realcolon_{val,test}` | `/mnt/dm-3/taishi/polypbench-artifacts/predictions/realcolon_{val,test}` |
 
 These links live outside git (in `data_root` and the `artifacts/` sibling), so this table is
 their only record; recreate them with `ln -sn <target> <link>` on a new machine.
 
 Backup after each REAL-Colon run:
 ```
-rsync -a /sld-shared/home/tn23794/polypbench-artifacts/ /mnt/dm-3/taishi/polypbench-artifacts/
+rsync -a /mnt/dm-3/taishi/polypbench-artifacts/ /sld-shared/home/tn23794/polypbench-artifacts/
 ```
 - Run long jobs in `tmux`. Do not run two `realcolon_subset.py frames` processes on the same
   `--out` with an old script version (fixed in the current version, but avoid anyway).
@@ -157,6 +161,11 @@ Source: Biffi et al., *Sci Data* 2024 (arXiv 2403.02163); Figshare article 22202
   `configs/datasets/realcolon.yaml`; recheck once the train split is complete.
 - Frame ids are 0-based and contiguous (checked on all val/test videos by `tests/test_realcolon.py`).
 - In-patient ranges are inclusive `[first, last]`: the test ranges sum to exactly 572,085.
+- **Box tags are written `xmin, xmax, ymin, ymax`** (not VOC's usual xmin, ymin, xmax, ymax;
+  seen in 003 and 004 archives). Always parse coordinates by tag name, never by position: a
+  positional parse silently scrambles every box (it did in a pilot script, 2026-10-22).
+- A lesion's visible span has gaps (004-012: boxed 9,307-13,494 but only 3,592 boxed frames;
+  e.g. frame 11,000 has no box). Use per-frame boxes, never first/last frame, as ground truth.
 - Some frames show a solid blue rounded rectangle (likely an on-screen-information redaction);
   decided to treat as an occluder and not mask it.
 
@@ -302,6 +311,26 @@ numbers to TRUE-Colon's.
   builder reads ahead in threads.
   The cache adds one extra resize (original → 640 → model input); on the pilot, check that
   predictions from the cache match predictions from the originals.
+- **Superseded 2026-10-22: models read the original frames, not the cache.** Pilot on 004-012
+  (frames 8,500-11,500, around the lesion's onset), each model run twice, cache vs original:
+  | | EMCAD (`emcad-b2@sunseg`) | causal SALI |
+  |---|---|---|
+  | Dice@0.5 between the two runs' masks, mean (p1) | 0.87 (0.02) | 0.97 (0.79) |
+  | frames whose any-pixel ≥ 0.5 decision flips | 8 / 3,000 | 0 / 3,000 |
+  | mean probability difference | 0.003 | 0.001 |
+
+  Decomposed for EMCAD (1,500 frames, vs the training-matching input, original → 352 bilinear):
+  JPEG alone Dice 0.97; the extra area-averaging resize alone 0.88; original → 352 with
+  INTER_AREA 0.88. So the **resize kernel**, not JPEG, causes it: EMCAD (and the other lab
+  models) trained with `A.Resize` = cv2 INTER_LINEAR from the full frame, which keeps grain and
+  aliasing; area averaging smooths it. SALI trained with PIL's antialiased resize, close to the
+  cache path, so it barely changes. Differences sit at blob edges and in faint blobs near 0.5
+  (EMCAD's median predicted area here: 0.7% of the frame), which feed mask → box extraction.
+  **Rule: each model applies its exact training resize to the original frame.** Side finding for
+  the paper: a "harmless" change of resize kernel moves EMCAD's masks by ~12% (Dice 0.88), a
+  robustness point. The cache is kept for visualization and possibly the 640-letterbox detectors.
+  Originals copied to `/mnt/dm-3/taishi/realcolon` (val + test frames + all metadata) so runs
+  don't depend on the shared NAS.
 
 **Mask → boxes** (offline)
 1. Threshold probability map at τ.
@@ -350,8 +379,8 @@ whole frame resized, no crop or pad; only mode supported by the evaluator for no
 `memory_reset`, `notes`. Per-video frame size for scaling maps back to original pixels comes from
 `summary/frame_manifest.json` (`original_wh`); sizes vary per video (1160-1352 × 959-1080).
 
-Predictions live on the NAS outside the REAL-Colon data folder, symlinked into `artifacts/`, and
-are backed up to local disk once granted (storage plan, section 3).
+Predictions live on `/mnt/dm-3/taishi`, symlinked into `artifacts/`, and are backed up to the
+NAS (storage plan, section 3).
 
 ---
 
@@ -428,11 +457,34 @@ Done:
   on 004-012 (grainiest, cohort 004); the test requires ≥ 35 dB (a wrong frame scores ~27 dB).
 
 Next:
-- [ ] **Step 4, pilot inference on one video:** add `--sequences` to `predict.py` /
-  `predict_sali.py`; run EMCAD and causal SALI on 001-013. Record fps (decides total GPU time;
-  SALI ~7.5 fps would be ~36 h per val + test pass), npz size per frame, and cache vs original
-  agreement (predictions from cache vs originals on a few thousand frames). Include a grainy
-  cohort-004 video (e.g. 004-013) in the agreement check: JPEG loss is largest there.
+- [ ] **Step 4, pilot inference on one video** (in progress 2026-10-22). Done: `--sequences` in
+  `predict.py` / `predict_sali.py` (run.json only once every video is done; tests); pilot on
+  **004-012** (val, not test: the pilot informs evaluation choices, so it must not look at test).
+  Measured (A6000): EMCAD 50 fps end to end (model 6.8 ms/frame), causal SALI 7.7 fps (model
+  135 ms/frame, 90% of time; memory bank capped at 35 entries, so cost doesn't grow with video
+  length). One val + test pass on one GPU: EMCAD ~5 h, SALI ~35 h (~9 h split over 4 GPUs by video).
+  Storage: EMCAD 11.5 KB/frame, SALI 6.6 KB/frame. Cache vs original: see section 7 → originals.
+  Cache-based pilot outputs moved to `/mnt/dm-3/taishi/pilot_from_cache_2026-10-22`.
+  Originals copied to dm-3, link repointed, both models rerun on 004-012 from originals
+  (2026-10-22): `emcad-b2@sunseg-prime` (22.4 fps) and `sali@sunseg-causal` (6.4 fps), run at
+  the same time. Both slower than from the cache (50 / 7.7 fps): full-size decode in the main
+  loop; **before full runs, decode in a background thread** (EMCAD val + test ~12 h at 22 fps).
+  **First look (004-012 only, 1 lesion; "fires" = any pixel ≥ 0.5, no boxes or min area yet):**
+  | | EMCAD-b2 (PRIME) | SALI (causal) |
+  |---|---|---|
+  | fires on outside-patient frames (1,893) | 100% | 99.9% |
+  | fires on in-patient polyp-free frames (18,042) | 100% (peak ≥ 0.9: 99.9%) | 99.9% (98.5%) |
+  | ≥ 0.5 region touches the GT box, boxed frames (3,592) | 90.6% | 87.9% |
+  | median ≥ 0.5 area on polyp-free in-patient frames | 3.4% of frame | 1.7% |
+  Both find the lesion when it is in view (outline matches it closely, incl. NBI views), but
+  predict something on essentially every frame: debris and fluid, bright out-of-focus regions,
+  specular highlights; no fixed screen element (firing is spread over the tissue). EMCAD's false
+  regions are larger and more numerous than SALI's. Consistent with positive-only training
+  (every SUN-SEG train frame has a polyp, so nothing teaches "predict nothing"): the "hype"
+  story, and the reason for the with-negatives ablation (section 6). Frame-level any-pixel
+  scoring is useless here; step 6 must judge boxes, minimum area and per-box scores.
+  Pilot predictions stay for step 6 development; the models will be retrained on the full
+  SUN-SEG train set, then everything is rerun under the new model ids.
 - [ ] **Step 5, ground truth:** `build_realcolon_gt.py` (section 9 tables: per-frame boxes in
   original pixels with `unique_id`, image size, in-patient flag, phase; per-lesion table).
   Read XML from the annotation archives; mind 001-012's `.0` names.

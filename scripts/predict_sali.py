@@ -5,6 +5,7 @@ Runs in the `sali` env (envs/sali.yml), not the main one:
     conda activate sali
     python scripts/predict_sali.py --dataset inhouse                                  # sali@sunseg
     python scripts/predict_sali.py --dataset inhouse --model_id sali@sunseg-causal
+    python scripts/predict_sali.py --dataset realcolon_val --model_id sali@sunseg-causal --sequences 004-012
 
 Inference follows SALI's own test_video.py (see polypbench/models/sali.py),
 with the partner frame (next or previous) set by `partner:` in the model
@@ -44,6 +45,8 @@ def main():
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--model_id", default="sali@sunseg")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--sequences", nargs="+",
+                        help="only these sequences (default: all); run.json is written once every sequence is done")
     args = parser.parse_args()
 
     model_id = args.model_id
@@ -60,7 +63,8 @@ def main():
 
     full_res = predictions.storage_format(dataset.name) == "png"   # npz keeps SALI's 352x352 output
     started = datetime.now().isoformat(timespec="seconds")
-    for seq in dataset:
+    selected = [dataset[name] for name in args.sequences] if args.sequences else list(dataset)
+    for seq in selected:
         if not args.overwrite and predictions.sequence_complete(dataset.name, model_id, POSTPROC, seq.name):
             print(f"[skip] {model_id} {seq.name}: already complete")
             continue
@@ -72,6 +76,10 @@ def main():
         dt = time.time() - t0
         print(f"[{model_id}] {seq.name}: {seq.n_frames} frames in {dt:.1f}s ({seq.n_frames / dt:.1f} fps)")
 
+    if not predictions.run_finished(dataset.name, model_id, POSTPROC, [s.name for s in dataset],
+                                    [s.name for s in selected]):
+        print(f"[partial] {model_id}: not every sequence of {dataset.name} is done; no run.json yet")
+        return
     sali_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT / config["code"], text=True).strip()
     predictions.write_run_info(dataset.name, model_id, POSTPROC, {

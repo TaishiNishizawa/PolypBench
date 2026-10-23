@@ -10,22 +10,30 @@ The model, loss, gradient clamp and augmentation are SALI's, imported from the
 unchanged third_party/SALI. The encoder starts from ImageNet PVTv2-b5, as the
 paper states and as our lab's models do (SALI's README links a trained image
 segmentation model instead; see the model config). Only the training clips differ
-(polypbench/train/sali_data.py), plus checkpoint selection: the best epoch is
-chosen on the same held-out validation videos as scripts/train.py, each video
-run frame by frame exactly as at test time (polypbench/models/sali.py), never
-on a test split (SALI's train_video.py selects on TestHardDataset/Seen).
+(polypbench/train/sali_data.py), plus checkpoint selection: the recipe's
+val_split decides where the best epoch is chosen, either the same held-out
+validation videos as scripts/train.py ("heldout", configs/train/sali.yaml) or
+TestHardDataset/Seen with all of TrainDataset used for training, as SALI's
+train_video.py does (configs/train/sali_ft.yaml). Each validation video is run
+frame by frame exactly as at test time (polypbench/models/sali.py).
 
 Runs in the `sali` env (envs/sali.yml). Writes to
 <artifacts>/checkpoints/<model_id>/ the same files as scripts/train.py:
     best.pth          state_dict of the best validation epoch (predict_sali.py loads this)
     last_state.pth    model + optimizer state, for --resume
-    train_log.csv     per epoch: train loss, val Dice, max_skip, lr, time
+    train_log.csv     per epoch: train loss, val Dice, max_skip, lr, time (+ test Dice with --test_every)
     run.json          recipe, model config, git commits, device, versions
 
 Usage:
     CUDA_VISIBLE_DEVICES=0 python scripts/train_sali.py --model_id sali@sunseg-causal
     CUDA_VISIBLE_DEVICES=0 python scripts/train_sali.py --model_id sali@sunseg-causal --resume
     python scripts/train_sali.py --model_id sali@sunseg-causal --smoke    # 20 steps, 1 val clip, to a scratch folder
+    CUDA_VISIBLE_DEVICES=0 python scripts/train_sali.py --model_id sali@sunseg-causal-ft-s0 --test_every 1
+
+The recipe defaults to the model config's train.recipe (else sali). A model_id
+ending in -s<N> trains the same config with seed N. --test_every N also logs
+Dice on every Nth clip of each SUN-SEG test split per epoch (whole clips, since
+SALI runs them frame by frame); monitoring only, never used to pick the epoch.
 """
 
 import argparse
@@ -42,7 +50,7 @@ import torch
 import yaml
 from torch.utils.data import DataLoader
 
-from polypbench.data.sunseg import load_sunseg_train_val
+from polypbench.data.sunseg import load_sunseg_config, load_sunseg_split, load_sunseg_train_val
 from polypbench.models import load_model_config
 from polypbench.models.sali import build_sali, build_transform, import_sali, predict_sequence
 from polypbench.paths import ARTIFACTS_ROOT, CONFIG_DIR, REPO_ROOT
@@ -123,16 +131,20 @@ def validate(model, sequences, model_config, recipe):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model_id", required=True)
-    parser.add_argument("--recipe", default="sali", help="configs/train/<recipe>.yaml")
+    parser.add_argument("--recipe", help="configs/train/<recipe>.yaml (default: the model config's train.recipe, else sali)")
     parser.add_argument("--resume", action="store_true", help="continue from last_state.pth")
     parser.add_argument("--overwrite", action="store_true", help="start over even if checkpoints exist")
     parser.add_argument("--smoke", action="store_true", help="quick end-to-end check: 1 epoch of 20 steps, 1 val clip")
+    parser.add_argument("--test_every", type=int, default=0,
+                        help="also log Dice on every Nth clip of each test split per epoch (monitoring only; 0 = off)")
     args = parser.parse_args()
 
-    with open(CONFIG_DIR / "train" / f"{args.recipe}.yaml") as f:
-        recipe = yaml.safe_load(f)
     model_config = load_model_config(args.model_id)
     spec = model_config["train"]
+    with open(CONFIG_DIR / "train" / f"{args.recipe or spec.get('recipe', 'sali')}.yaml") as f:
+        recipe = yaml.safe_load(f)
+    if "seed" in model_config:   # a -s<N> seed run
+        recipe["seed"] = model_config["seed"]
     if model_config["partner"] != "prev":
         raise SystemExit(f"{args.model_id}: train_sali.py builds causal clips, but the config says partner: "
                          f"{model_config['partner']}")
@@ -152,10 +164,18 @@ def main():
     from train_video import structure_loss   # SALI's loss, unchanged
     from utils.utils import clip_gradient    # SALI's element-wise gradient clamp
 
-    train_set, val_set = load_sunseg_train_val()
+    train_set, val_set = load_sunseg_train_val(recipe["val_split"])
     train_seqs, val_seqs = list(train_set), list(val_set)
     if args.smoke:
         val_seqs = val_seqs[:1]
+    test_seqs = {}                    # monitoring only, never used to pick the best epoch
+    if args.test_every:
+        for split in load_sunseg_config()["test_splits"]:
+            name = "test_" + split.replace("Test", "").replace("Dataset", "").replace("/", "_").lower()
+            test_seqs[name] = list(load_sunseg_split(split, name))[::args.test_every]
+            if args.smoke:
+                test_seqs[name] = test_seqs[name][:1]
+    log_fields = LOG_FIELDS + list(test_seqs)
     print(f"{args.model_id}: {sum(s.n_frames for s in train_seqs)} train frames in {len(train_seqs)} clips, "
           f"{sum(s.n_frames for s in val_seqs)} val frames in {len(val_seqs)} clips, {recipe['epochs']} epochs")
 
@@ -182,6 +202,7 @@ def main():
         "model_config": model_config,
         "train_frames": sum(s.n_frames for s in train_seqs),
         "val_frames": sum(s.n_frames for s in val_seqs),
+        "test_every": args.test_every,
         "polypbench_commit": git_commit(REPO_ROOT),
         "model_code_commit": git_commit(REPO_ROOT / model_config["code"]),
         "device": torch.cuda.get_device_name(0),
@@ -207,6 +228,7 @@ def main():
         train_loss = train_one_epoch(model, loader, optimizer, structure_loss, clip_gradient, recipe,
                                      max_steps=20 if args.smoke else None)
         val_dice = validate(model, val_seqs, model_config, recipe)
+        test_dice = {name: validate(model, seqs, model_config, recipe) for name, seqs in test_seqs.items()}
 
         is_best = val_dice > best_dice
         if is_best:
@@ -218,14 +240,15 @@ def main():
         minutes = (time.time() - t0) / 60
         new_log = not log_path.exists()
         with open(log_path, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=LOG_FIELDS)
+            writer = csv.DictWriter(f, fieldnames=log_fields)
             if new_log:
                 writer.writeheader()
             writer.writerow({"epoch": epoch, "train_loss": f"{train_loss:.5f}", "val_dice": f"{val_dice:.5f}",
                              "max_skip": max_skip, "lr": f"{lr:.3e}", "epoch_minutes": f"{minutes:.1f}",
-                             "best": int(is_best)})
+                             "best": int(is_best), **{name: f"{d:.5f}" for name, d in test_dice.items()}})
         print(f"Epoch {epoch}: train loss {train_loss:.4f}  val Dice {val_dice:.4f}"
-              f"{'  (best)' if is_best else ''}  [{minutes:.1f} min]", flush=True)
+              f"{'  (best)' if is_best else ''}  [{minutes:.1f} min]"
+              + "".join(f"  {name} {d:.4f}" for name, d in test_dice.items()), flush=True)
 
     run_info.update(finished=datetime.now().isoformat(timespec="seconds"), best_val_dice=best_dice)
     with open(out_dir / "run.json", "w") as f:

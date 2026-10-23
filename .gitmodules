@@ -29,3 +29,7 @@
 	path = third_party/VPS
 	url = https://github.com/TaishiNishizawa/VPS
 	ignore = untracked
+[submodule "third_party/CMSA-Net"]
+	path = third_party/CMSA-Net
+	url = https://github.com/TaishiNishizawa/CMSA-Net
+	ignore = untracked

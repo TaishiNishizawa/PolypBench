@@ -6,9 +6,14 @@ masks_dir: GT                  # <root>/<split>/GT/<clip>/<name>.png
 test_splits: [TestEasyDataset/Seen, TestHardDataset/Seen, TestEasyDataset/Unseen, TestHardDataset/Unseen]
 
 # Training uses TrainDataset (112 clips from 51 videos). SUN-SEG has no
-# validation split, and selecting checkpoints on a test split would leak, so
-# whole VIDEOS are held out of TrainDataset for validation: clips of the same
-# video show the same polyp, so no video appears in both. Chosen by shuffling
+# validation split. Each train recipe's val_split picks one of two protocols:
+#   heldout: whole VIDEOS (val_clips below) are held out of TrainDataset for
+#     validation; clips of the same video show the same polyp, so no video
+#     appears in both. No test split is used.
+#   TestHardDataset/Seen: train on all 112 clips and select the checkpoint on
+#     that test split, as SALI and CMSA-Net do. Its Seen results are then
+#     biased; the Unseen splits stay untouched.
+# val_clips were chosen by shuffling
 # the 51 videos with random.Random(0) and taking them in order until >= 10% of
 # frames: 5 videos, 11 clips, 2,065 frames (10.6%). Training keeps 101 clips,
 # 17,479 frames.

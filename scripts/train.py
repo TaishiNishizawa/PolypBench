@@ -2,8 +2,12 @@
 
 The recipe (configs/train/<recipe>.yaml) is identical for every model; the
 model's own choices (architecture, supervised outputs, pretrained backbone)
-come from the `train:` section of configs/models/<model_id>.yaml. The best
-epoch is chosen on held-out validation videos, never on a test split.
+come from the `train:` section of configs/models/<model_id>.yaml, which may
+also name its recipe (`recipe:`; --recipe overrides, default sunseg). The
+recipe's val_split decides where the best epoch is chosen: held-out validation
+videos ("heldout"), or a SUN-SEG test split with all of TrainDataset used for
+training (see configs/datasets/sunseg.yaml). A model_id ending in -s<N> trains
+the same config with seed N (polypbench.models.load_model_config).
 
 Runs in the `train` env (envs/train.yml). Writes to
 <artifacts>/checkpoints/<model_id>/:
@@ -16,10 +20,11 @@ Usage:
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py --model_id emcad-b2@sunseg
     CUDA_VISIBLE_DEVICES=0 python scripts/train.py --model_id emcad-b2@sunseg --resume
     python scripts/train.py --model_id mkunet@sunseg --smoke     # 20 steps, 1 epoch, to a scratch folder
+    CUDA_VISIBLE_DEVICES=0 python scripts/train.py --model_id emcad-b2@sunseg-ft-s0 --test_every 1
 
 --test_every N also logs Dice on every Nth frame of each SUN-SEG test split per
 epoch. That is for monitoring only (e.g. how much picking the epoch on a test
-split would flatter the result); the best epoch is still chosen on validation.
+split would flatter the result); the best epoch is still chosen on val_split.
 """
 
 import argparse
@@ -57,7 +62,7 @@ def git_commit(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model_id", required=True)
-    parser.add_argument("--recipe", default="sunseg", help="configs/train/<recipe>.yaml")
+    parser.add_argument("--recipe", help="configs/train/<recipe>.yaml (default: the model config's train.recipe, else sunseg)")
     parser.add_argument("--resume", action="store_true", help="continue from last_state.pth")
     parser.add_argument("--overwrite", action="store_true", help="start over even if checkpoints exist")
     parser.add_argument("--smoke", action="store_true", help="quick end-to-end check: 1 epoch of 20 steps")
@@ -65,10 +70,12 @@ def main():
                         help="also log Dice on every Nth frame of each test split per epoch (monitoring only; 0 = off)")
     args = parser.parse_args()
 
-    with open(CONFIG_DIR / "train" / f"{args.recipe}.yaml") as f:
-        recipe = yaml.safe_load(f)
     model_config = load_model_config(args.model_id)
     spec = model_config["train"]
+    with open(CONFIG_DIR / "train" / f"{args.recipe or spec.get('recipe', 'sunseg')}.yaml") as f:
+        recipe = yaml.safe_load(f)
+    if "seed" in model_config:   # a -s<N> seed run
+        recipe["seed"] = model_config["seed"]
 
     out_dir = ARTIFACTS_ROOT / "checkpoints" / args.model_id
     if args.smoke:
@@ -82,7 +89,7 @@ def main():
     random.seed(recipe["seed"]); np.random.seed(recipe["seed"]); torch.manual_seed(recipe["seed"])
     device = torch.device("cuda")
 
-    train_pairs, val_pairs = train_val_pairs()
+    train_pairs, val_pairs = train_val_pairs(recipe["val_split"])
     if args.smoke:
         train_pairs = random.Random(0).sample(train_pairs, 20 * recipe["batch_size"])
         val_pairs = val_pairs[::50]

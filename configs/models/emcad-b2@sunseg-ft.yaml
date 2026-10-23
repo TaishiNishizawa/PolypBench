@@ -1,0 +1,33 @@
+model_id: emcad-b2@sunseg-ft
+arch: emcad-b2
+backend: onnx
+weights: checkpoints/emcad-b2@sunseg-ft/model.onnx   # relative to artifacts_root; written by scripts/export_onnx.py
+source: >-
+  Trained by us on all of SUN-SEG TrainDataset, best epoch chosen on TestHardDataset/Seen,
+  with scripts/train.py and configs/train/prime_ft.yaml (PRIME recipe); EMCAD code from
+  third_party/EMCAD (SLDGroup/EMCAD).
+input_size: 352
+input_channels: 3
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+output_index: 0                    # the export has a single output: the final head
+
+# Seed runs: <model_id>-s<N> (e.g. emcad-b2@sunseg-ft-s0), one checkpoint folder each.
+
+train:
+  recipe: prime_ft                 # configs/train/prime_ft.yaml (default for scripts/train.py)
+  code: third_party/EMCAD          # added to sys.path
+  module: lib.networks
+  class: EMCADNet
+  kwargs:                          # EMCAD train_polyp.py defaults
+    num_classes: 1
+    encoder: pvt_v2_b2
+    kernel_sizes: [1, 3, 5]
+    expansion_factor: 2
+    dw_parallel: true
+    add: true
+    lgag_ks: 3
+    activation: relu6
+  pretrained_backbone: checkpoints/pretrained/pvt_v2_b2.pth   # ImageNet PVTv2-b2, loaded into model.backbone
+  supervision: heads_and_sum       # loss on each of the 4 heads + on their sum (as in train_polyp.py)
+  final_output: -1                 # forward returns [p4, p3, p2, p1]; p1 (finest) is the prediction

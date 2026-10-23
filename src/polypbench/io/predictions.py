@@ -86,6 +86,17 @@ def sequence_complete(dataset, model_id, postproc, sequence):
     return (sequence_dir(dataset, model_id, postproc, sequence) / "done.json").exists()
 
 
+def run_finished(dataset, model_id, postproc, all_sequences, written):
+    """Whether a run may now be marked complete (run.json): every sequence of the dataset is written.
+
+    npz tracks sequences, so sequences written by earlier (e.g. --sequences)
+    runs count; png doesn't, so this run must have written them all itself.
+    """
+    if storage_format(dataset) == "npz":
+        return all(sequence_complete(dataset, model_id, postproc, s) for s in all_sequences)
+    return set(written) >= set(all_sequences)
+
+
 def open_sequence(dataset, model_id, postproc, sequence):
     """A writer for one sequence's predictions, in the dataset's storage format."""
     if storage_format(dataset) == "npz":

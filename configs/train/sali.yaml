@@ -3,7 +3,8 @@
 # (MICCAI 2024, Sec. 2.3) states a value it is used; everything the paper leaves
 # out comes from SALI's train_video.py / dataloaders/video_list.py.
 name: sali
-dataset: sunseg               # configs/datasets/sunseg.yaml: TrainDataset minus val_clips
+dataset: sunseg               # configs/datasets/sunseg.yaml
+val_split: heldout            # train on TrainDataset minus val_clips, select the epoch on val_clips
 
 epochs: 30                    # paper (code default: 200)
 batch_size: 14                # paper (code default: 8)

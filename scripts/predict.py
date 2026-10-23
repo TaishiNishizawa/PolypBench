@@ -10,6 +10,7 @@ sequences of an interrupted run are skipped too.
 Usage:
     python scripts/predict.py --dataset inhouse --models sacnet-b2@colondb
     python scripts/predict.py --dataset inhouse --models all --postprocs none temporal_smooth
+    python scripts/predict.py --dataset realcolon_val --models emcad-b2@sunseg-prime --postprocs none --sequences 004-012
 """
 
 import argparse
@@ -35,7 +36,8 @@ def git_commit():
         return "unknown"
 
 
-def run_model(dataset, model_id, postproc_names, overwrite, threads):
+def run_model(dataset, model_id, postproc_names, overwrite, threads, sequences=None):
+    """sequences: names of the sequences to run (default: all of `dataset`)."""
     todo = [p for p in postproc_names if overwrite or not predictions.is_complete(dataset.name, model_id, p)]
     for p in set(postproc_names) - set(todo):
         print(f"[skip] {model_id} / {p}: already complete")
@@ -45,8 +47,9 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads):
     model = load_model(model_id, threads=threads)
     postprocs = {name: load_postproc(name) for name in todo}
     started = datetime.now().isoformat(timespec="seconds")
+    selected = [dataset[name] for name in sequences] if sequences else list(dataset)
 
-    for seq in dataset:
+    for seq in selected:
         names = [n for n in todo if overwrite or not predictions.sequence_complete(dataset.name, model_id, n, seq.name)]
         if not names:
             print(f"[skip] {model_id} {seq.name}: already complete")
@@ -67,7 +70,11 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads):
         dt = time.time() - t0
         print(f"[{model_id}] {seq.name}: {seq.n_frames} frames in {dt:.1f}s ({seq.n_frames / dt:.1f} fps)")
 
+    all_names = [seq.name for seq in dataset]
     for name in todo:
+        if not predictions.run_finished(dataset.name, model_id, name, all_names, [s.name for s in selected]):
+            print(f"[partial] {model_id} / {name}: not every sequence of {dataset.name} is done; no run.json yet")
+            continue
         predictions.write_run_info(dataset.name, model_id, name, {
             "dataset": dataset.name,
             "model_id": model_id,
@@ -88,6 +95,8 @@ def main():
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--models", nargs="+", required=True, help="model ids, group names (configs/groups.yaml), or 'all'")
     parser.add_argument("--postprocs", nargs="+", default=["none", "temporal_smooth"])
+    parser.add_argument("--sequences", nargs="+",
+                        help="only these sequences (default: all); run.json is written once every sequence is done")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--threads", type=int, default=4,
                         help="CPU threads for OpenCV and onnxruntime (default 4; their default is every core, "
@@ -106,7 +115,7 @@ def main():
         if not (ARTIFACTS_ROOT / config["weights"]).exists():
             print(f"[skip] {model_id}: no weights yet at {config['weights']} (not trained/exported?)")
             continue
-        run_model(dataset, model_id, args.postprocs, args.overwrite, args.threads)
+        run_model(dataset, model_id, args.postprocs, args.overwrite, args.threads, args.sequences)
 
 
 if __name__ == "__main__":

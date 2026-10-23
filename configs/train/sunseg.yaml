@@ -4,7 +4,8 @@
 # under `train:`. Values follow the original train_polyp.py of EMCAD, MK-UNet
 # and SACNet (which share one recipe), except epochs and batch size.
 name: sunseg
-dataset: sunseg               # configs/datasets/sunseg.yaml: TrainDataset minus val_clips
+dataset: sunseg               # configs/datasets/sunseg.yaml
+val_split: heldout            # train on TrainDataset minus val_clips, select the epoch on val_clips
 
 epochs: 20                    # originals: 200 on ColonDB (~500 images); SUN-SEG train is 17,479 frames
 batch_size: 8                 # EMCAD / MK-UNet default (SACNet's script used 16)

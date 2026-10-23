@@ -1,0 +1,29 @@
+# The sali recipe (configs/train/sali.yaml) under the field's SUN-SEG
+# protocol: train on all 112 TrainDataset clips and choose the best epoch on
+# TestHardDataset/Seen, as SALI's own train_video.py does. Everything else is
+# identical to sali.yaml. Seen results are biased by the selection; Unseen are not.
+name: sali_ft
+dataset: sunseg               # configs/datasets/sunseg.yaml
+val_split: TestHardDataset/Seen   # train on all of TrainDataset, select the epoch on this test split
+
+epochs: 30                    # paper (code default: 200)
+batch_size: 14                # paper (code default: 8)
+img_size: 352                 # paper and code
+
+optimizer:
+  name: adam
+  lr: 1.0e-4                  # paper and code
+  weight_decay: 1.0e-4        # paper (code: none)
+# No LR schedule: the code decays x0.1 every 50 epochs, which never fires in 30.
+grad_clip: 0.5                # code: clamp every gradient element to [-0.5, 0.5]
+
+# The memory frame of each training sample is drawn from the max_skip frames
+# before it, redrawn every 5 epochs with a growing max_skip (code: skip_list in
+# train_video.py, starting from get_loader's default of 5).
+max_skip_stage_epochs: 5
+max_skip_schedule: [5, 10, 15, 20, 25, 5]   # epochs 1-5, 6-10, ..., 26-30
+
+mem_freq: 5                   # validation: write the memory bank every 5 frames, as at test time
+val_threshold: 0.5            # validation Dice: raw sigmoid >= 0.5 (no min-max), same as evaluate.py
+num_workers: 8
+seed: 2021                    # code default

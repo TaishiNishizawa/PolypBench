@@ -1,19 +1,37 @@
-"""Model loading. Each model is described by configs/models/<model_id>.yaml."""
+"""Model loading. Each model is described by configs/models/<model_id>.yaml.
+
+Seed runs share one config: '<base>-s<N>' (e.g. emcad-b2@sunseg-ft-s1) is
+<base>.yaml trained with seed N, with its own checkpoint folder
+checkpoints/<base>-s<N>/, so predictions and metrics keep one model_id per run.
+"""
+
+import re
 
 import yaml
 
 from polypbench.paths import ARTIFACTS_ROOT, CONFIG_DIR
 
 MODELS_CONFIG_DIR = CONFIG_DIR / "models"
+_SEEDED = re.compile(r"^(.+)-s(\d+)$")
 
 
 def load_model_config(model_id):
     path = MODELS_CONFIG_DIR / f"{model_id}.yaml"
+    base, seed = model_id, None
+    m = _SEEDED.match(model_id)
+    if not path.exists() and m and (MODELS_CONFIG_DIR / f"{m.group(1)}.yaml").exists():
+        base, seed = m.group(1), int(m.group(2))
+        path = MODELS_CONFIG_DIR / f"{base}.yaml"
     if not path.exists():
         available = sorted(p.stem for p in MODELS_CONFIG_DIR.glob("*.yaml"))
         raise FileNotFoundError(f"No model config for '{model_id}'. Available: {available}")
     with open(path) as f:
-        return yaml.safe_load(f)
+        config = yaml.safe_load(f)
+    if seed is not None:
+        config["model_id"] = model_id
+        config["seed"] = seed
+        config["weights"] = config["weights"].replace(f"checkpoints/{base}/", f"checkpoints/{model_id}/")
+    return config
 
 
 def load_groups():
