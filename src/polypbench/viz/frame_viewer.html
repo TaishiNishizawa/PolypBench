@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prediction Viewer</title>
+<style>
+  :root {
+    --surface: #fcfcfb; --panel: #f3f2ef; --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e4e3df; --outside: rgba(137, 135, 129, 0.18); --gt: #52514e; --cursor: #0b0b0b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface: #1a1a19; --panel: #242422; --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #33332f; --outside: rgba(137, 135, 129, 0.22); --gt: #c3c2b7; --cursor: #f0efec;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--surface); color: var(--ink);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--ink-2); margin-bottom: 12px; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 10px; }
+  .controls label { color: var(--ink-2); display: inline-flex; gap: 6px; align-items: center; }
+  input[type=number] { width: 88px; padding: 3px 6px; background: var(--panel); color: var(--ink);
+                       border: 1px solid var(--grid); border-radius: 6px; font: inherit; }
+  button { padding: 3px 10px; background: var(--panel); color: var(--ink); border: 1px solid var(--grid);
+           border-radius: 6px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  .where { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+  .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+  .panel { background: var(--panel); border-radius: 8px; padding: 8px; }
+  .panel h2 { font-size: 13px; font-weight: 600; margin: 0 0 6px; display: flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .panel img { width: 100%; display: block; border-radius: 4px; background: #000; }
+  .stat { color: var(--ink-2); font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .timeline-wrap { position: relative; margin-top: 14px; }
+  canvas { width: 100%; display: block; cursor: crosshair; }
+  .tip { position: absolute; pointer-events: none; background: var(--panel); color: var(--ink);
+         border: 1px solid var(--grid); border-radius: 6px; padding: 4px 8px; font-size: 12px;
+         white-space: nowrap; display: none; font-variant-numeric: tabular-nums; }
+  .legend { color: var(--ink-2); font-size: 12px; margin-top: 4px; }
+  .keys { color: var(--muted); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1 id="title">Prediction viewer</h1>
+<div class="sub" id="sub">loading…</div>
+
+<div class="controls">
+  <label>frame <input type="number" id="frame" min="0" value="0"></label>
+  <button id="prev" title="previous frame (←)">◀</button>
+  <button id="next" title="next frame (→)">▶</button>
+  <button id="prevBox" title="previous boxed frame">◀ box</button>
+  <button id="nextBox" title="next boxed frame">box ▶</button>
+  <label>threshold <input type="number" id="thr" min="0.05" max="0.95" step="0.05" value="0.5"></label>
+  <label><input type="checkbox" id="gt" checked> GT box</label>
+  <span class="where" id="where"></span>
+</div>
+
+<div class="panels" id="panels"></div>
+
+<div class="timeline-wrap">
+  <canvas id="timeline" height="200"></canvas>
+  <div class="tip" id="tip"></div>
+</div>
+<div class="legend">Timeline: predicted area ≥ 0.5 per frame (max over each pixel column), one row per model.
+  Shaded = outside the patient; dark bars = frames with a ground-truth box. Click to jump.</div>
+<div class="keys">Keys: ← / → one frame · Shift = 1 s · Alt = 10 s · B / Shift+B next / previous boxed frame</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let meta, frame = 0, boxedFrames = [];
+const isBoxed = i => meta.boxed_runs.some(([a, b]) => i >= a && i < b);
+
+function fmtTime(i) {
+  const s = i / meta.fps, m = Math.floor(s / 60);
+  return `${m}:${(s - 60 * m).toFixed(1).padStart(4, "0")}`;
+}
+
+function setFrame(i) {
+  frame = Math.max(0, Math.min(meta.n_frames - 1, Math.round(i)));
+  $("frame").value = frame;
+  render();
+}
+
+function render() {
+  const t = $("thr").value, gt = $("gt").checked ? 1 : 0;
+  const inside = frame >= meta.inside[0] && frame <= meta.inside[1];
+  $("where").textContent = `${fmtTime(frame)} · ${inside ? "in patient" : "outside patient"}` +
+    (isBoxed(frame) ? " · polyp boxed" : "");
+  for (const m of meta.models) {
+    $(`img-${m.id}`).src = `/frame?model=${encodeURIComponent(m.id)}&i=${frame}&t=${t}&gt=${gt}`;
+  }
+  fetch(`/stats?i=${frame}&t=${t}`).then(r => r.json()).then(s => {
+    if (+$("frame").value !== frame) return;
+    for (const m of meta.models) {
+      const st = s.models[m.id];
+      $(`stat-${m.id}`).textContent = `peak ${st.peak.toFixed(3)} · area ≥ ${(+t).toFixed(2)}: ${(100 * st.area).toFixed(2)}% of frame`;
+    }
+  });
+  drawTimeline();
+}
+
+function drawTimeline() {
+  const cv = $("timeline"), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, rows = meta.models.length, gtH = 14, rowH = 44, pad = 6, labelH = 14;
+  const H = gtH + pad + rows * (rowH + labelH + pad) + 16;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px";
+  const g = cv.getContext("2d"); g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement), v = n => css.getPropertyValue(n).trim();
+  const x = i => i / meta.n_frames * W;
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = v("--outside");
+  g.fillRect(0, 0, x(meta.inside[0]), H - 16);
+  g.fillRect(x(meta.inside[1] + 1), 0, W - x(meta.inside[1] + 1), H - 16);
+  g.fillStyle = v("--gt");
+  for (const [a, b] of meta.boxed_runs) g.fillRect(x(a), 0, Math.max(1, x(b) - x(a)), gtH);
+  g.fillStyle = v("--ink-2"); g.font = "11px system-ui";
+  meta.models.forEach((m, r) => {
+    const top = gtH + pad + r * (rowH + labelH + pad), area = meta.timeline[m.id];
+    const max = Math.max(1, ...area);
+    g.fillStyle = v("--ink-2");
+    g.fillText(`${m.id} (max ${(max / 10).toFixed(1)}%)`, 2, top + 10);
+    const base = top + labelH + rowH;
+    g.strokeStyle = v("--grid"); g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, base + 0.5); g.lineTo(W, base + 0.5); g.stroke();
+    g.strokeStyle = m.color; g.lineWidth = 1.5; g.beginPath();
+    const per = meta.n_frames / W;
+    for (let px = 0; px < W; px++) {
+      let peak = 0;
+      for (let i = Math.floor(px * per); i < Math.min(meta.n_frames, Math.floor((px + 1) * per) + 1); i++) peak = Math.max(peak, area[i]);
+      const y = base - peak / max * rowH;
+      px === 0 ? g.moveTo(px, y) : g.lineTo(px, y);
+    }
+    g.stroke();
+  });
+  g.fillStyle = v("--muted");
+  for (let m = 0; m <= meta.n_frames / meta.fps / 60; m += 1) {
+    const px = x(m * 60 * meta.fps);
+    g.fillRect(px, H - 16, 1, 4);
+    if (m % 2 === 0) g.fillText(`${m} min`, Math.min(px + 2, W - 36), H - 3);
+  }
+  g.strokeStyle = v("--cursor"); g.lineWidth = 1.5;
+  g.beginPath(); g.moveTo(x(frame) + 0.5, 0); g.lineTo(x(frame) + 0.5, H - 16); g.stroke();
+}
+
+function frameAt(ev) {
+  const r = $("timeline").getBoundingClientRect();
+  return Math.floor((ev.clientX - r.left) / r.width * meta.n_frames);
+}
+
+function jumpBoxed(dir) {
+  const target = dir > 0 ? boxedFrames.find(i => i > frame) : [...boxedFrames].reverse().find(i => i < frame);
+  if (target !== undefined) setFrame(target);
+}
+
+fetch("/meta").then(r => r.json()).then(m => {
+  meta = m;
+  for (const [a, b] of meta.boxed_runs) for (let i = a; i < b; i++) boxedFrames.push(i);
+  $("title").textContent = `${meta.dataset} / ${meta.video}`;
+  $("sub").textContent = `${meta.n_frames.toLocaleString()} frames at ${meta.fps} fps · in patient ${meta.inside[0]}–${meta.inside[1]} · ` +
+    `${boxedFrames.length.toLocaleString()} boxed frames`;
+  $("frame").max = meta.n_frames - 1;
+  $("panels").innerHTML = meta.models.map(mm =>
+    `<div class="panel"><h2><span class="swatch" style="background:${mm.color}"></span>${mm.id}</h2>` +
+    `<img id="img-${mm.id}" alt="${mm.id} prediction on the current frame"><div class="stat" id="stat-${mm.id}">&nbsp;</div></div>`).join("");
+  setFrame(boxedFrames.length ? boxedFrames[0] : 0);
+});
+
+$("frame").addEventListener("change", e => setFrame(+e.target.value));
+$("thr").addEventListener("change", render);
+$("gt").addEventListener("change", render);
+$("prev").onclick = () => setFrame(frame - 1);
+$("next").onclick = () => setFrame(frame + 1);
+$("prevBox").onclick = () => jumpBoxed(-1);
+$("nextBox").onclick = () => jumpBoxed(1);
+$("timeline").addEventListener("click", ev => setFrame(frameAt(ev)));
+$("timeline").addEventListener("mousemove", ev => {
+  const i = Math.max(0, Math.min(meta.n_frames - 1, frameAt(ev))), tip = $("tip");
+  tip.innerHTML = `frame ${i} · ${fmtTime(i)}${isBoxed(i) ? " · boxed" : ""}<br>` +
+    meta.models.map(m => `<span class="swatch" style="background:${m.color}"></span> ${(meta.timeline[m.id][i] / 10).toFixed(1)}%`).join("&nbsp;&nbsp;");
+  tip.style.display = "block";
+  const r = $("timeline").getBoundingClientRect();
+  tip.style.left = Math.min(ev.clientX - r.left + 12, r.width - tip.offsetWidth) + "px";
+  tip.style.top = (ev.clientY - r.top + 12) + "px";
+});
+$("timeline").addEventListener("mouseleave", () => $("tip").style.display = "none");
+window.addEventListener("resize", () => meta && drawTimeline());
+window.addEventListener("keydown", ev => {
+  if (ev.target.tagName === "INPUT" && ev.target.type === "number") return;
+  const step = ev.altKey ? Math.round(10 * meta.fps) : ev.shiftKey ? Math.round(meta.fps) : 1;
+  if (ev.key === "ArrowRight") { setFrame(frame + step); ev.preventDefault(); }
+  if (ev.key === "ArrowLeft") { setFrame(frame - step); ev.preventDefault(); }
+  if (ev.key.toLowerCase() === "b") jumpBoxed(ev.shiftKey ? -1 : 1);
+});
+</script>
+</body>
+</html>

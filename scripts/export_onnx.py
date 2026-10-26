@@ -35,13 +35,14 @@ MAX_ABS_DIFF = 1e-3   # on logits
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model_id", required=True)
-    parser.add_argument("--recipe", default="sunseg", help="for the input size/normalization of the check frames")
+    parser.add_argument("--recipe", help="for the input size/normalization and val_split of the check frames "
+                                         "(default: the model config's train.recipe, else sunseg)")
     parser.add_argument("--checkpoint", default="best.pth")
     parser.add_argument("--smoke", action="store_true", help="export the train.py --smoke checkpoint instead")
     args = parser.parse_args()
 
     model_config = load_model_config(args.model_id)
-    with open(CONFIG_DIR / "train" / f"{args.recipe}.yaml") as f:
+    with open(CONFIG_DIR / "train" / f"{args.recipe or model_config['train'].get('recipe', 'sunseg')}.yaml") as f:
         recipe = yaml.safe_load(f)
     out_dir = ARTIFACTS_ROOT / "checkpoints" / ("_smoke" if args.smoke else "") / args.model_id
     ckpt = out_dir / args.checkpoint
@@ -59,7 +60,7 @@ def main():
                       dynamic_axes={"input": {0: "batch"}, "output": {0: "batch"}})
 
     # Check against PyTorch on real validation frames.
-    _, val_pairs = train_val_pairs()
+    _, val_pairs = train_val_pairs(recipe["val_split"])
     frames = SegmentationFrames(val_pairs[::200], build_transform(recipe, train=False))
     session = ort.InferenceSession(str(tmp_path), providers=["CPUExecutionProvider"])
     worst = 0.0

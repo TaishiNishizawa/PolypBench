@@ -9,14 +9,28 @@ from torch import nn
 from polypbench.paths import ARTIFACTS_ROOT, REPO_ROOT
 
 
-def build_model(model_config):
-    """Instantiate the architecture from its third_party code, with the pretrained backbone loaded."""
-    spec = model_config["train"]
-    code_dir = REPO_ROOT / spec["code"]
+def import_repo_module(code_dir, module):
+    """Import `module` from a third_party repo folder. Several repos name their package `lib`
+    (EMCAD, CASCADE, SALI, CMSA-Net, ...): a cached one from another repo is dropped first, or a
+    second model in the same process would import the first one's code."""
     if not code_dir.is_dir():
         raise FileNotFoundError(f"{code_dir} not found (git submodule update --init?)")
+    top = module.split(".")[0]
+    for name in [n for n in sys.modules if n == top or n.startswith(top + ".")]:
+        file = getattr(sys.modules[name], "__file__", None) or ""
+        if not file.startswith(str(code_dir)):
+            del sys.modules[name]
+    if str(code_dir) in sys.path:
+        sys.path.remove(str(code_dir))
     sys.path.insert(0, str(code_dir))
-    module = importlib.import_module(spec["module"])
+    return importlib.import_module(module)
+
+
+def build_model(model_config, pretrained=True):
+    """Instantiate the architecture from its third_party code, with the pretrained backbone loaded
+    (pretrained=False skips it, e.g. when trained weights are loaded right after)."""
+    spec = model_config["train"]
+    module = import_repo_module(REPO_ROOT / spec["code"], spec["module"])
     cls = getattr(module, spec["class"])
 
     kwargs = dict(spec["kwargs"])
@@ -24,7 +38,7 @@ def build_model(model_config):
         kwargs["pretrain"] = False
     model = cls(**kwargs)
 
-    if spec.get("pretrained_backbone"):
+    if pretrained and spec.get("pretrained_backbone"):
         load_backbone(model.backbone, ARTIFACTS_ROOT / spec["pretrained_backbone"])
     return model
 

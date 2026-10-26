@@ -1,0 +1,28 @@
+# Training recipe for CMSA-Net (scripts/train_cmsa.py), under the field's
+# SUN-SEG protocol (all 112 TrainDataset clips, best epoch on
+# TestHardDataset/Seen, as CMSA-Net's own my_train.py does). Where the paper
+# (MICCAI 2026, Sec. 2.3) states a value it is used; everything it leaves out
+# comes from CMSA-Net's scripts/my_train.py and scripts/config.py.
+name: cmsa_ft
+dataset: sunseg               # configs/datasets/sunseg.yaml
+val_split: TestHardDataset/Seen   # train on all of TrainDataset, select the epoch on this test split
+
+epochs: 30                    # paper (code: 51)
+batch_size: 4                 # paper (code: 8)
+img_size: 352                 # paper and code
+adjacent_frames: 4            # code video_time_clips: clip = 2 references + 4 frames = 6 (paper: 6 frames)
+
+optimizer:
+  name: adamw
+  lr: 1.0e-4                  # paper (code: 2e-4)
+  weight_decay: 1.0e-4        # paper and code
+  backbone_lr_scale: 0.1      # code: the encoder (feature_extractor) trains at 0.1 x lr
+scheduler:                    # code: CosineAnnealingLR(T_max=20, eta_min=5e-5), stepped once per epoch.
+  name: cosine                # T_max < epochs, so the lr falls until epoch 20 and then rises again;
+  t_max: 20                   # eta_min > the backbone's 1e-5, so the backbone lr rises from the start.
+  eta_min: 5.0e-5             # Both kept as released.
+grad_clip: null               # code: clip_gradient is commented out
+
+val_threshold: 0.5            # validation Dice: raw sigmoid >= 0.5 at frame size, same as train_sali.py
+num_workers: 8
+seed: 0                       # code sets none; -s<N> model ids override it

@@ -32,6 +32,15 @@ def label(rgb, lines, scale=0.55, origin=(8, 22), line_height=22):
     return out
 
 
+def draw_box(rgb, box, thickness=2):
+    """Outline box (x0, y0, x1, y1) in white over a dark edge, so it reads on any tissue colour."""
+    out = rgb.copy()
+    p0, p1 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
+    cv2.rectangle(out, p0, p1, (0, 0, 0), thickness + 2, cv2.LINE_AA)
+    cv2.rectangle(out, p0, p1, TEXT_COLOR, thickness, cv2.LINE_AA)
+    return out
+
+
 def header_cell(text, width, height=36):
     cell = np.full((height, width, 3), 30, dtype=np.uint8)
     size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)[0]

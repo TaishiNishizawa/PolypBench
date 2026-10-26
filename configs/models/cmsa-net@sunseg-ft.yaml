@@ -1,0 +1,36 @@
+model_id: cmsa-net@sunseg-ft
+arch: cmsa-net
+backend: external          # runs in the `sali` env (timm 0.5.4, as CMSA-Net pins): python scripts/predict_cmsa.py
+env: envs/sali.yml
+code: third_party/CMSA-Net/cmsa_project   # submodule (fork of wangtong627/CMSA-Net); `backbone` option added in lib/model_arch/cmsa_net.py
+weights: checkpoints/cmsa-net@sunseg-ft/best.pth   # relative to artifacts_root; written by scripts/train_cmsa.py
+source: >-
+  CMSA-Net (PVTv2-B2 variant) trained by us on all of SUN-SEG TrainDataset
+  (best epoch chosen on TestHardDataset/Seen, as CMSA-Net's my_train.py does)
+  with scripts/train_cmsa.py and configs/train/cmsa_ft.yaml.
+backbone: pvt_v2_b2        # the paper's best variant (README/paper Tables 1-2); the released code builds Res2Net-50
+input_size: 352
+# CMSA-Net's lib/dataloader/statistics.pth. Its Normalize_video indexes img[:, :, i] on CxHxW
+# tensors, i.e. pixel COLUMNS 0-2, not channels, so the network effectively sees un-normalized
+# [0, 1] images. Kept as released (polypbench/models/cmsa.py calls their own transforms).
+mean: [0.4732661, 0.44874457, 0.3948762]
+std: [0.22674961, 0.22012031, 0.2238305]
+adjacent_frames: 4         # window = [ref_sem, ref_conf, 4 most recent frames]; the last is the current frame
+dmr:                       # Dynamic Multi-source Reference, my_test.py VPSTest_WithTestingTimeReferUpdate_2Ref
+  alpha: 0.5               # conf score = alpha * confidence + (1 - alpha) * consistency
+  beta: 0.5                # sem score  = beta * separability + (1 - beta) * consistency
+  cooldown_conf: 1         # paper: 1
+  cooldown_sem: 5          # paper: 5
+  tau_dup: 0.98            # roll back the conf update if both references become near-duplicates
+notes: >-
+  Causal: the current frame attends to the two references and earlier frames
+  only, and references are replaced by past frames. One exception, as in the
+  released test script: frame 0 is predicted inside the first window, whose
+  second reference is frame 1.
+
+# Seed runs: <model_id>-s<N> (e.g. cmsa-net@sunseg-ft-s0), one checkpoint folder each.
+
+train:
+  recipe: cmsa_ft                  # configs/train/cmsa_ft.yaml (default for scripts/train_cmsa.py)
+  pretrained_backbone: checkpoints/pretrained/pvt_v2_b2.pth   # ImageNet PVTv2-b2 (whai362/PVT), as the paper states
+  pretrained_sha256: 80711cd1b37ffba12bec6c7a2a7c54efe2315ed635e6d2055fd51c3e909ede4d

@@ -24,7 +24,10 @@ Usage:
 
 import csv
 import json
+import tarfile
+from pathlib import PurePosixPath
 
+import xml.etree.ElementTree as ET   # official, MD5-checked archives; expat >= 2.4 blocks entity expansion
 import yaml
 
 from polypbench.data.base import Dataset, FrameFolderSequence
@@ -55,6 +58,30 @@ def inside_patient(video, config=None):
     config = config or load_realcolon_config()
     first, last = config["inside_patient"][video]
     return first, last
+
+
+def load_boxes(video, config=None):
+    """{frame: [(unique_id, xmin, ymin, xmax, ymax), ...]} in original pixels, frames with >= 1 box only.
+
+    Read straight from the annotation archive. Coordinates are read by tag name:
+    REAL-Colon writes them as xmin, xmax, ymin, ymax, so a positional parse
+    scrambles every box. A lesion's boxed frames can have gaps (it leaves the view).
+    """
+    config = config or load_realcolon_config()
+    path = DATA_ROOT / config["root"] / config["annotations_dir"] / f"{video}_annotations.tar.gz"
+    boxes = {}
+    with tarfile.open(path) as tar:
+        for member in tar:
+            if not (member.isfile() and member.name.endswith(".xml")):
+                continue
+            objects = ET.fromstring(tar.extractfile(member).read()).findall("object")
+            if not objects:
+                continue
+            index = int(float(PurePosixPath(member.name).stem.rsplit("_", 1)[1]))   # "004-012_9307" or "_9307.0"
+            boxes[index] = [(obj.findtext("unique_id"),
+                             *(int(float(obj.find("bndbox").findtext(tag))) for tag in ("xmin", "ymin", "xmax", "ymax")))
+                            for obj in objects]
+    return boxes
 
 
 def frame_path(video, index, config=None):

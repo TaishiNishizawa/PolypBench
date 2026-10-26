@@ -161,6 +161,18 @@ class NpzSequenceWriter:
                        "map_hw": list(self.map_hw) if self.map_hw else None}, f, indent=2)
 
 
+def sequence_info(dataset, model_id, postproc, sequence):
+    """done.json of a complete npz sequence: n_frames, n_chunks, map_hw."""
+    with open(sequence_dir(dataset, model_id, postproc, sequence) / "done.json") as f:
+        return json.load(f)
+
+
+def read_chunk(dataset, model_id, postproc, sequence, k):
+    """(frames int32 N, probs uint8 N x H x W) of chunk k of an npz sequence (random access)."""
+    with np.load(sequence_dir(dataset, model_id, postproc, sequence) / f"chunk_{k:04d}.npz") as chunk:
+        return chunk["frames"], chunk["probs"]
+
+
 def read_sequence(dataset, model_id, postproc, sequence):
     """Yield (index, float32 HxW probability map in [0, 1]) for every frame of an npz sequence, in order."""
     if storage_format(dataset) != "npz":

@@ -7,8 +7,15 @@ chunks at model resolution for REAL-Colon). Runs whose run.json already
 exists are skipped unless --overwrite is given; for REAL-Colon, finished
 sequences of an interrupted run are skipped too.
 
+--backend pth (default) runs models we trained straight from
+checkpoints/<model_id>/best.pth and needs the `train` env; models without a
+PyTorch checkpoint (e.g. the @colondb ONNX files) are skipped. --backend onnx
+runs the exported model.onnx (scripts/export_onnx.py) and works in the
+lighter `polypbench` env too. Both give the same maps up to float rounding.
+
 Usage:
-    python scripts/predict.py --dataset inhouse --models sacnet-b2@colondb
+    python scripts/predict.py --dataset sunseg_hard_unseen --models emcad-b2@sunseg-ft-s0    # train env
+    python scripts/predict.py --dataset inhouse --models sacnet-b2@colondb --backend onnx
     python scripts/predict.py --dataset inhouse --models all --postprocs none temporal_smooth
     python scripts/predict.py --dataset realcolon_val --models emcad-b2@sunseg-prime --postprocs none --sequences 004-012
 """
@@ -22,7 +29,7 @@ import cv2
 
 from polypbench.data import load_dataset
 from polypbench.io import predictions
-from polypbench.models import load_model, load_model_config, resolve_models
+from polypbench.models import BACKENDS, load_model, load_model_config, resolve_models, weights_path
 from polypbench.paths import ARTIFACTS_ROOT, REPO_ROOT
 from polypbench.postproc import load_postproc, load_postproc_config
 
@@ -36,7 +43,7 @@ def git_commit():
         return "unknown"
 
 
-def run_model(dataset, model_id, postproc_names, overwrite, threads, sequences=None):
+def run_model(dataset, model_id, postproc_names, overwrite, threads, backend, sequences=None):
     """sequences: names of the sequences to run (default: all of `dataset`)."""
     todo = [p for p in postproc_names if overwrite or not predictions.is_complete(dataset.name, model_id, p)]
     for p in set(postproc_names) - set(todo):
@@ -44,7 +51,7 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads, sequences=N
     if not todo:
         return
 
-    model = load_model(model_id, threads=threads)
+    model = load_model(model_id, threads=threads, backend=backend)
     postprocs = {name: load_postproc(name) for name in todo}
     started = datetime.now().isoformat(timespec="seconds")
     selected = [dataset[name] for name in sequences] if sequences else list(dataset)
@@ -83,6 +90,8 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads, sequences=N
             "postproc_config": load_postproc_config(name),
             "storage": predictions.storage_format(dataset.name),
             "sequences": {seq.name: seq.n_frames for seq in dataset},
+            "backend": backend,
+            "weights": str(weights_path(load_model_config(model_id), backend).relative_to(ARTIFACTS_ROOT)),
             "providers": model.providers,
             "git_commit": git_commit(),
             "started": started,
@@ -98,6 +107,8 @@ def main():
     parser.add_argument("--sequences", nargs="+",
                         help="only these sequences (default: all); run.json is written once every sequence is done")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--backend", choices=BACKENDS, default="pth",
+                        help="pth: PyTorch checkpoint best.pth (train env); onnx: exported model.onnx (default pth)")
     parser.add_argument("--threads", type=int, default=4,
                         help="CPU threads for OpenCV and onnxruntime (default 4; their default is every core, "
                              "which overloads a shared server when several runs go at once)")
@@ -112,10 +123,12 @@ def main():
         if config["backend"] == "external":
             print(f"[skip] {model_id}: external model, run its own script (see its config)")
             continue
-        if not (ARTIFACTS_ROOT / config["weights"]).exists():
-            print(f"[skip] {model_id}: no weights yet at {config['weights']} (not trained/exported?)")
+        path = weights_path(config, args.backend)
+        if path is None or not path.exists():
+            hint = "no PyTorch checkpoint; try --backend onnx" if args.backend == "pth" else "not exported?"
+            print(f"[skip] {model_id}: no {args.backend} weights{f' at {path}' if path else ''} ({hint})")
             continue
-        run_model(dataset, model_id, args.postprocs, args.overwrite, args.threads, args.sequences)
+        run_model(dataset, model_id, args.postprocs, args.overwrite, args.threads, args.backend, args.sequences)
 
 
 if __name__ == "__main__":

@@ -52,14 +52,40 @@ def resolve_models(names):
     return model_ids
 
 
-def load_model(model_id, threads=None):
-    """Build a predictor from its config: .predict(rgb_frame) -> probability map."""
+BACKENDS = ("pth", "onnx")
+
+
+def weights_path(config, backend):
+    """The weights file a backend loads: "onnx" = the config's `weights` (the exported model.onnx);
+    "pth" = checkpoints/<model_id>/best.pth written by scripts/train.py. None if the model has no
+    such weights (models we didn't train have no best.pth or no `train:` section)."""
+    if backend not in BACKENDS:
+        raise ValueError(f"backend must be one of {BACKENDS}, got '{backend}'")
+    if backend == "onnx":
+        return ARTIFACTS_ROOT / config["weights"]
+    if "train" not in config:
+        return None
+    return ARTIFACTS_ROOT / "checkpoints" / config["model_id"] / "best.pth"
+
+
+def load_model(model_id, threads=None, backend="onnx"):
+    """Build a predictor from its config: .predict(rgb_frame) -> probability map.
+    backend "pth" runs the PyTorch checkpoint (needs the `train` env), "onnx" the exported model."""
     config = load_model_config(model_id)
+    if config["backend"] == "onnx" and backend == "pth":
+        path = weights_path(config, "pth")
+        if path is None:
+            raise ValueError(f"{model_id}: no `train:` section, so no PyTorch checkpoint; use backend onnx")
+        try:
+            from polypbench.models.pth import TorchPredictor
+        except ImportError as e:
+            raise ImportError(f"backend pth needs PyTorch and the model code: run in the `train` env ({e})") from e
+        return TorchPredictor(config, path, threads=threads)
     if config["backend"] == "onnx":
         from polypbench.models.onnx import OnnxPredictor
         return OnnxPredictor(
             model_id=config["model_id"],
-            weights_path=ARTIFACTS_ROOT / config["weights"],
+            weights_path=weights_path(config, "onnx"),
             input_size=config["input_size"],
             input_channels=config["input_channels"],
             mean=config["mean"],

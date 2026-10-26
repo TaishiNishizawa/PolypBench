@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 import pytest
 
-from polypbench.data.realcolon import (cache_dir, cache_info, frame_path, inside_patient, load_realcolon,
+from polypbench.data.realcolon import (cache_dir, cache_info, frame_path, inside_patient, load_boxes, load_realcolon,
                                        load_realcolon_config, load_video_info)
 
 EVAL_SPLITS = ["realcolon_val", "realcolon_test"]
@@ -127,3 +127,14 @@ def test_cache_matches_originals(config, info):
             original = cv2.resize(original, cached.shape[1::-1], interpolation=cv2.INTER_AREA).astype("float32")
             psnr = 10 * np.log10(255.0 ** 2 / np.mean((cached - original) ** 2))
             assert psnr >= 35.0, f"{video} frame {idx}: PSNR {psnr:.1f} dB"
+
+
+def test_load_boxes_by_tag_name(config):
+    """004-012: one lesion, boxed on 3,592 frames between 9,307 and 13,494, with gaps."""
+    boxes = load_boxes("004-012", config)
+    assert len(boxes) == 3592 and min(boxes) == 9307 and max(boxes) == 13494
+    assert 11000 not in boxes                                     # lesion out of view
+    assert boxes[10000] == [("004-012_1", 359, 193, 857, 773)]    # XML order is xmin, xmax, ymin, ymax
+    for frame_boxes in boxes.values():
+        for _, x0, y0, x1, y1 in frame_boxes:
+            assert x0 < x1 and y0 < y1

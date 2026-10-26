@@ -2,6 +2,7 @@ name: realcolon
 root: REAL-Colon               # relative to data_root; a symlink to the NAS copy (Paper_Progress.md section 3)
 frames_dir: frames             # <root>/frames/<video>_frames/<video>_<frame>.jpg
 video_info: video_info.csv     # organizers' per-video metadata: fps, num_frames, endoscope_brand
+annotations_dir: annotations   # <root>/annotations/<video>_annotations.tar.gz: one Pascal-VOC XML per frame
 
 # Models read the ORIGINAL frames, so each model's own training resize starts
 # from the same pixels it did on SUN-SEG. A smaller copy (640 px long side,

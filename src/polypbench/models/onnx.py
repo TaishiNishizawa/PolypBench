@@ -1,12 +1,13 @@
 """Run an exported .onnx segmentation model on single RGB frames.
 
-Preprocessing must match how each model was trained: resize to
-input_size, scale to [0, 1], normalize with the config's mean/std.
+Preprocessing (polypbench.models.preprocess) is shared with the PyTorch
+predictor (polypbench.models.pth).
 """
 
-import cv2
 import numpy as np
 import onnxruntime as ort
+
+from polypbench.models.preprocess import preprocess, to_probability
 
 
 class OnnxPredictor:
@@ -37,22 +38,8 @@ class OnnxPredictor:
             print(f"[WARN] {model_id} is running on CPU (active providers: {self.providers})")
         self.input_name = self.session.get_inputs()[0].name
 
-    def preprocess(self, rgb):
-        """uint8 HxWx3 RGB frame -> float32 1xCxSxS network input."""
-        size = (self.input_size, self.input_size)
-        if self.input_channels == 1:
-            img = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-            img = cv2.resize(img, size, interpolation=cv2.INTER_LINEAR)[..., None]
-        else:
-            img = cv2.resize(rgb, size, interpolation=cv2.INTER_LINEAR)
-        img = (img.astype(np.float32) / 255.0 - self.mean) / self.std
-        return np.ascontiguousarray(img.transpose(2, 0, 1)[None], dtype=np.float32)
-
     def predict(self, rgb):
         """Return the foreground probability map (float32 SxS, values in [0, 1])."""
-        outputs = self.session.run(None, {self.input_name: self.preprocess(rgb)})
-        logits = np.squeeze(outputs[self.output_index]).astype(np.float32)
-        if logits.ndim != 2:
-            raise ValueError(f"{self.model_id}: expected a single-channel output, got shape "
-                             f"{outputs[self.output_index].shape}")
-        return 1.0 / (1.0 + np.exp(-np.clip(logits, -50.0, 50.0)))   # clip: avoid exp overflow
+        x = preprocess(rgb, self.input_size, self.input_channels, self.mean, self.std)
+        outputs = self.session.run(None, {self.input_name: x})
+        return to_probability(self.model_id, outputs[self.output_index])

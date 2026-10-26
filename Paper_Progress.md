@@ -433,6 +433,7 @@ size, histology, latency-exclusion flag.
 | `build_gt.py` | TODO | Ground-truth files (section 9) |
 | `evaluate.py` | TODO | Maps → boxes → all metrics and breakdowns |
 | Model runners | TODO | One adapter per model writing section 8 format |
+| `view_predictions.py` | `PolypBench/polypbench/scripts/` | Local frame browser for one REAL-Colon video: per-model prediction overlays + GT boxes, clickable timeline of predicted area, threshold control. Serves `127.0.0.1:8765`; open via VS Code port forwarding |
 
 ---
 
