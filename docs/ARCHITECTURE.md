@@ -239,8 +239,13 @@ changes.
 - Frame rate varies per video (25 / 29.97 / 60 fps) and comes from
   `video_info.csv`; frame size varies per video too.
 - Ground truth is boxes (per-frame Pascal-VOC XML), not masks, so sequences
-  have no mask annotations; box ground truth is built separately for the
-  detection evaluation.
+  have no mask annotations. `scripts/build_realcolon_gt.py` reads every XML
+  once and writes three fact tables (boxes, lesions, videos) to
+  `artifacts/ground_truth/realcolon/`; the detection evaluation reads them with
+  `polypbench.data.realcolon_gt.load_ground_truth()`. Evaluation choices
+  (phases, thresholds) are derived when evaluating, never stored there. Box
+  coordinates must be read by tag name (`iter_annotations` does): REAL-Colon
+  writes them as xmin, xmax, ymin, ymax.
 - Frames live on the lab NAS, reached through the `<data_root>/REAL-Colon`
   symlink (see [Paths](#paths)), with a local copy of val + test. **Models
   read the original frames** (`frames_from: original`), so each model's own

@@ -7,6 +7,9 @@ the VS Code port forward (Ports tab; VS Code usually offers it), or
     python scripts/view_predictions.py --dataset realcolon_val --video 004-012 \
         --models emcad-b2@sunseg-prime sali@sunseg-causal
 
+    In another iTerm: ssh -N -L 8765:localhost:8765 tn23794@ece-a55005.austin.utexas.edu
+
+
 The page shows, per model, the frame with the >= threshold region tinted and
 outlined (green) and the GT boxes (white), plus a timeline of predicted area per
 frame to click on. Logic lives in polypbench/viz/frame_viewer.py.

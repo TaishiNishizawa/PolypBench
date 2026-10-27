@@ -60,28 +60,37 @@ def inside_patient(video, config=None):
     return first, last
 
 
-def load_boxes(video, config=None):
-    """{frame: [(unique_id, xmin, ymin, xmax, ymax), ...]} in original pixels, frames with >= 1 box only.
+def iter_annotations(video, config=None):
+    """Yield (frame, (width, height), [(unique_id, xmin, ymin, xmax, ymax), ...]) for every annotation XML.
 
-    Read straight from the annotation archive. Coordinates are read by tag name:
+    One XML per frame, read straight from the archive, in archive order (not
+    frame order); frames without a polyp yield an empty list. Coordinates are
+    raw (0-based pixels; can extend past the frame edge) and read by tag name:
     REAL-Colon writes them as xmin, xmax, ymin, ymax, so a positional parse
-    scrambles every box. A lesion's boxed frames can have gaps (it leaves the view).
+    scrambles every box.
     """
     config = config or load_realcolon_config()
     path = DATA_ROOT / config["root"] / config["annotations_dir"] / f"{video}_annotations.tar.gz"
-    boxes = {}
     with tarfile.open(path) as tar:
         for member in tar:
             if not (member.isfile() and member.name.endswith(".xml")):
                 continue
-            objects = ET.fromstring(tar.extractfile(member).read()).findall("object")
-            if not objects:
-                continue
+            root = ET.fromstring(tar.extractfile(member).read())
             index = int(float(PurePosixPath(member.name).stem.rsplit("_", 1)[1]))   # "004-012_9307" or "_9307.0"
-            boxes[index] = [(obj.findtext("unique_id"),
-                             *(int(float(obj.find("bndbox").findtext(tag))) for tag in ("xmin", "ymin", "xmax", "ymax")))
-                            for obj in objects]
-    return boxes
+            size = (int(root.findtext("size/width")), int(root.findtext("size/height")))
+            boxes = [(obj.findtext("unique_id"),
+                      *(int(float(obj.find("bndbox").findtext(tag))) for tag in ("xmin", "ymin", "xmax", "ymax")))
+                     for obj in root.findall("object")]
+            yield index, size, boxes
+
+
+def load_boxes(video, config=None):
+    """{frame: [(unique_id, xmin, ymin, xmax, ymax), ...]} raw, frames with >= 1 box only.
+
+    A lesion's boxed frames can have gaps (it leaves the view). For evaluation,
+    use the clipped boxes from polypbench.data.realcolon_gt instead.
+    """
+    return {index: boxes for index, _, boxes in iter_annotations(video, config) if boxes}
 
 
 def frame_path(video, index, config=None):

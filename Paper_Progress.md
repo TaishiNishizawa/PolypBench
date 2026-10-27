@@ -155,7 +155,12 @@ Source: Biffi et al., *Sci Data* 2024 (arXiv 2403.02163); Figshare article 22202
   appearance**. So onset frames are annotated, and **frames after removal are labeled polyp-free**
   (the resection site is a negative).
 - Known quirk: **003-012 has 3 annotated lesions but `video_info.csv` lists 2** (only mismatch
-  in the dataset). One lesion likely lacks size/histology. Note it in the data section.
+  in the dataset). `lesion_info.csv` has all three (incl. size and histology), so only
+  `video_info.csv`'s count is wrong. Note it in the data section.
+- **1,725 boxes extend past the frame edge** (mostly cohort 004; e.g. ymax 1087 on a 1080-tall
+  frame): clipped in the ground-truth tables, flagged `clipped`. Coordinates are 0-based.
+- **8,062 frames carry 2+ boxes** (351,264 boxes on 342,109 boxed frames).
+- `lesion_info.csv` site spellings vary (`caecum`/`cecum`, `trasnverse`): normalized in the GT tables.
 - Known quirk: **001-012 names its frame and annotation files `001-012_<frame>.0.jpg/.xml`**
   (all other downloaded videos: `<video>_<frame>.jpg`). Recorded as `float_frame_names` in
   `configs/datasets/realcolon.yaml`; recheck once the train split is complete.
@@ -430,7 +435,7 @@ size, histology, latency-exclusion flag.
 | `realcolon_subset.py` | `realcolon/` | `meta` (metadata + annotations + summaries), `summary`, `frames` (download subset, `--jobs N`, resume, MD5, extract), `verify` (check completeness, rebuild manifest records) |
 | `view_annotations.py` | `realcolon/` | Draw GT boxes on selected frames (before / onset / spread / after removal) |
 | `make_clip.py` | `realcolon/` | Render a video clip with GT boxes (`--anchor onset|end|full`, `--start/--end`, `--speed`) |
-| `build_gt.py` | TODO | Ground-truth files (section 9) |
+| `build_realcolon_gt.py` | `PolypBench/polypbench/scripts/` | Ground-truth tables (boxes, lesions, videos) for all 60 videos → `artifacts/ground_truth/realcolon/`; read with `load_ground_truth()` |
 | `evaluate.py` | TODO | Maps → boxes → all metrics and breakdowns |
 | Model runners | TODO | One adapter per model writing section 8 format |
 | `view_predictions.py` | `PolypBench/polypbench/scripts/` | Local frame browser for one REAL-Colon video: per-model prediction overlays + GT boxes, clickable timeline of predicted area, threshold control. Serves `127.0.0.1:8765`; open via VS Code port forwarding |
@@ -452,24 +457,19 @@ Done:
   unchanged for in-house / SUN-SEG (byte-identical regression check); `tests/test_predictions.py`.
   Committed as `2b198df` (submodules PraNet, Polyp-PVT, VPS: `1d5b763`).
 - [x] **Step 3, frame cache:** `scripts/build_realcolon_cache.py` (640 px, q95 4:4:4, NAS
-  read-ahead); loader reads the cache by default. All 20 val + test videos cached 2026-10-21
-  (962,816 frames, 134 GB, 79 min + 6 min trial); all tests pass. Fidelity vs resized
-  originals depends on sensor grain: PSNR 46-49 dB on clean videos, ~40 dB on 004-014, ~38 dB
-  on 004-012 (grainiest, cohort 004); the test requires ≥ 35 dB (a wrong frame scores ~27 dB).
-
-Next:
-- [ ] **Step 4, pilot inference on one video** (in progress 2026-10-22). Done: `--sequences` in
-  `predict.py` / `predict_sali.py` (run.json only once every video is done; tests); pilot on
-  **004-012** (val, not test: the pilot informs evaluation choices, so it must not look at test).
-  Measured (A6000): EMCAD 50 fps end to end (model 6.8 ms/frame), causal SALI 7.7 fps (model
-  135 ms/frame, 90% of time; memory bank capped at 35 entries, so cost doesn't grow with video
-  length). One val + test pass on one GPU: EMCAD ~5 h, SALI ~35 h (~9 h split over 4 GPUs by video).
-  Storage: EMCAD 11.5 KB/frame, SALI 6.6 KB/frame. Cache vs original: see section 7 → originals.
-  Cache-based pilot outputs moved to `/mnt/dm-3/taishi/pilot_from_cache_2026-10-22`.
-  Originals copied to dm-3, link repointed, both models rerun on 004-012 from originals
-  (2026-10-22): `emcad-b2@sunseg-prime` (22.4 fps) and `sali@sunseg-causal` (6.4 fps), run at
-  the same time. Both slower than from the cache (50 / 7.7 fps): full-size decode in the main
-  loop; **before full runs, decode in a background thread** (EMCAD val + test ~12 h at 22 fps).
+  read-ahead). All 20 val + test videos cached 2026-10-21 (962,816 frames, 134 GB, 79 min);
+  PSNR vs resized originals 46-49 dB on clean videos, ~38 dB on grainy 004-012 (test: ≥ 35 dB).
+  **Not used for inference** (step 4 finding, section 7: `frames_from: original`); kept for
+  viewing and fast experiments.
+- [x] **Step 4, pilot inference** (2026-10-22) on **004-012** (val, not test: the pilot informs
+  evaluation choices, so it must not look at test). `--sequences` in `predict.py` /
+  `predict_sali.py` (run.json only once every video is done; tests). Found the cache's resize
+  kernel changes EMCAD's masks (Dice 0.88 vs the training resize; JPEG alone 0.97) → each model
+  applies its own training resize to the original frame; val + test originals copied to dm-3.
+  Cache-based outputs moved to `/mnt/dm-3/taishi/pilot_from_cache_2026-10-22`.
+  From originals: `emcad-b2@sunseg-prime` 22.4 fps, `sali@sunseg-causal` 6.4 fps (from the
+  cache: 50 / 7.7 fps; SALI model 135 ms/frame, memory bank capped at 35 entries).
+  Storage: EMCAD 11.5 KB/frame, SALI 6.6 KB/frame. Viewer: `scripts/view_predictions.py`.
   **First look (004-012 only, 1 lesion; "fires" = any pixel ≥ 0.5, no boxes or min area yet):**
   | | EMCAD-b2 (PRIME) | SALI (causal) |
   |---|---|---|
@@ -477,6 +477,8 @@ Next:
   | fires on in-patient polyp-free frames (18,042) | 100% (peak ≥ 0.9: 99.9%) | 99.9% (98.5%) |
   | ≥ 0.5 region touches the GT box, boxed frames (3,592) | 90.6% | 87.9% |
   | median ≥ 0.5 area on polyp-free in-patient frames | 3.4% of frame | 1.7% |
+
+  
   Both find the lesion when it is in view (outline matches it closely, incl. NBI views), but
   predict something on essentially every frame: debris and fluid, bright out-of-focus regions,
   specular highlights; no fixed screen element (firing is spread over the tissue). EMCAD's false
@@ -486,14 +488,34 @@ Next:
   scoring is useless here; step 6 must judge boxes, minimum area and per-box scores.
   Pilot predictions stay for step 6 development; the models will be retrained on the full
   SUN-SEG train set, then everything is rerun under the new model ids.
-- [ ] **Step 5, ground truth:** `build_realcolon_gt.py` (section 9 tables: per-frame boxes in
-  original pixels with `unique_id`, image size, in-patient flag, phase; per-lesion table).
-  Read XML from the annotation archives; mind 001-012's `.0` names.
+- [x] **Step 5, ground truth** (2026-10-26): `scripts/build_realcolon_gt.py` +
+  `data/realcolon_gt.py` → `artifacts/ground_truth/realcolon/{boxes,lesions,videos}.csv.gz`
+  for all 60 videos (51 s); read with `load_ground_truth()`. Facts only: per-frame facts (in
+  patient or not) follow from each video's 0..n-1 frames and in-patient range; **phases ("after
+  removal" etc.) are derived at evaluation** from lesion last frames + fps + the chosen window,
+  so the open window length never forces a rebuild. Boxes clipped to the frame (1,725, mostly
+  cohort 004; `clipped` flag); 8,062 frames have 2+ boxes. Matches every published count
+  (`tests/test_realcolon_gt.py`, 8 tests; 38 in the repo pass): 351,264 boxes; frames
+  1,794,907 / 371,169 / 591,647; boxed frames 230,936 / 29,067 / 82,106 (TRUE-Colon Table 1 for
+  val/test); lesions 101 / 10 / 21, all boxed and in `lesion_info.csv`; 19 not polyps;
+  polyp-free videos as listed in section 4; only lesion-count mismatch is 003-012 in
+  `video_info.csv`. TRUE-Colon latency exclusion (our reading: a gap of > 50 missing frames
+  starting within a lesion's first 250 frames) flags 7 / 21 test lesions, 0 / 10 val,
+  37 / 101 train: **cross-check against `true-colon` in step 6.**
+
+Next:
 - [ ] **Step 6, evaluation:** `metrics/detection.py` + `evaluate_detection.py` (maps → boxes
-  scaled by each video's original size → frame / lesion metrics, curves, breakdowns);
-  cross-check against `true-colon` on shared metrics.
+  scaled by each video's original size → frame / lesion metrics, curves, breakdowns; phases
+  derived here); cross-check against `true-colon` on shared metrics, incl. the latency
+  exclusions. Plan to be reviewed before building; develop on the 004-012 pilot predictions.
+- [ ] Before full runs: decode frames in a background thread in `predict.py` / `predict_sali.py`
+  (EMCAD val + test ~12 h at 22 fps from originals; SALI ~35 h on one GPU, ~9 h over 4 by video).
+- [ ] Retrain models on the full SUN-SEG train set (new model ids, e.g. `pvt-cascade@sunseg-ft-s0`),
+  then rerun REAL-Colon inference. Training data loader: cap worker threads
+  (`worker_init_fn` with `cv2.setNumThreads(0)`, `torch.set_num_threads(1)`); the last run hit load ~650.
 - [ ] Pilot on 001-013, 001-014, 002-014, 003-013, 004-014 (4 cohorts, 12 lesions, 1 polyp-free video).
-- [ ] Visual sanity check: overlay predicted vs GT boxes on onset and post-removal frames (`make_clip.py` extension).
+- [ ] Visual sanity check: overlay predicted vs GT boxes on onset and post-removal frames
+  (`view_predictions.py` once step 6 produces boxes).
 - [ ] As-released (next-frame) SALI on REAL-Colon, alongside causal.
 - [ ] Check the train-split download finishes; run `verify --splits train`; recheck
   `float_frame_names` on the new videos.
@@ -509,7 +531,7 @@ Open decisions to settle before multi-seed runs: seeds in `model_id` tag (sectio
 - [ ] One with-negatives training configuration per model family.
 
 ### Tier 2: weeks 3-6 (REAL-Colon results)
-- [ ] Build downscaled frame cache; run all models on val + test (causal; plus as-released variants).
+- [ ] Run all models on val + test from originals (causal; plus as-released variants).
 - [ ] Thresholds from val; full metrics on test; comparison-only test-matched thresholds.
 - [ ] Breakdowns (size, histology, cohort, phases incl. after-removal false alarms).
 - [ ] Extended evaluation on train + test videos (~120 lesions).
