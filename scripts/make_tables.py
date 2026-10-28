@@ -101,7 +101,7 @@ def read_toolbox(model_id):
 
 
 def sunseg_tables(out_dir):
-    model_ids = resolve_models(["sunseg", "colondb"])
+    model_ids = resolve_models(["sunseg"])
     results = {m: read_toolbox(m) for m in model_ids}
     for metric, label in TOOLBOX_METRICS.items():
         rows = [{"model": m, **{SPLIT_LABELS[s]: results[m].get(s, {}).get(metric, float("nan")) for s in SPLITS}}

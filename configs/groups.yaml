@@ -10,13 +10,18 @@ groups:
     - sacnet-b2@colondb
     - sali@sunseg
   sunseg:           # everything trained on SUN-SEG: our retrained models and SALI
-    - sali@sunseg-causal
-    - pvt-cascade@sunseg-prime
-    - emcad-b2@sunseg-prime
-    - sali@sunseg
-    - emcad-b2@sunseg
-    - mkunet@sunseg
-    - sacnet-b2@sunseg
+    # - sali@sunseg-causal
+    # - pvt-cascade@sunseg-prime
+    # - emcad-b2@sunseg-prime
+    # - sali@sunseg
+    # - emcad-b2@sunseg
+    # - mkunet@sunseg
+    # - sacnet-b2@sunseg
+    - sali@sunseg-causal-ft-s0
+    - pvt-cascade@sunseg-ft-s0
+    - emcad-b2@sunseg-ft-s0
+    - cmsa-net@sunseg-ft-s0
+
     
     
 
@@ -25,3 +30,4 @@ trainset_pairs:
   EMCAD:     {colondb: emcad@colondb,     sunseg: emcad-b2@sunseg}
   MK-UNet:   {colondb: mkunet@colondb,    sunseg: mkunet@sunseg}
   SACNet-b2: {colondb: sacnet-b2@colondb, sunseg: sacnet-b2@sunseg}
+  CMSA-Net:  {colondb: cmsa-net@colondb,  sunseg: cmsa-net@sunseg}

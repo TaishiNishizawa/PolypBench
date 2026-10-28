@@ -228,11 +228,12 @@ SUN-SEG; automatic (no human prompts). **Excluded:** WavePolyp, HFSTI-Net (ICLR 
 |---|---|---|---|
 | PraNet (MICCAI 2020) | github.com/DengPingFan/PraNet | TODO | Root of most later polyp models |
 | Polyp-PVT | github.com/DengPingFan/Polyp-PVT | TODO | Standard transformer baseline |
-| CASCADE | github.com/SLDGroup/CASCADE | Trained + SUN-SEG eval | Lab model |
-| EMCAD (CVPR 2024) | github.com/SLDGroup/EMCAD | Trained + SUN-SEG eval | Lab model |
+| CASCADE | github.com/SLDGroup/CASCADE | Trained + SUN-SEG eval (s0 done, s1 + s2 loading) | Lab model |
+| EMCAD (CVPR 2024) | github.com/SLDGroup/EMCAD | Trained + SUN-SEG eval (s0 done, s1 + s2 loading) | Lab model |
 | MK-UNet | github.com/SLDGroup/MK-UNet | Trained + SUN-SEG eval | Lab model (lightweight) |
 | SAM2-UNet | github.com/WZH0120/SAM2-UNet | TODO | Foundation-model encoder |
 | nnU-Net 2D | github.com/MIC-DKFZ/nnUNet | TODO | Generic strong baseline |
+| ssFormer 2D | github.com/shiwt03/SSformer | TODO | Generic strong baseline |
 | _Optional:_ MEGANet (WACV 2024) / HSNet | github.com/UARK-AICV/MEGANet, github.com/baiboat/HSNet | Optional | Extra recent architecture |
 
 ### Video ("3D" = 2D + time), 7
@@ -240,11 +241,11 @@ SUN-SEG; automatic (no human prompts). **Excluded:** WavePolyp, HFSTI-Net (ICLR 
 |---|---|---|---|
 | PNS+ (MIR 2022) | github.com/GewelsJI/VPS | First frame of clip as anchor + 5-frame window | TODO |
 | FLA-Net (MICCAI 2023) | github.com/jhl-Det/FLA-Net | Neighboring frames (**verify direction**) | TODO |
-| SALI (MICCAI 2024) | github.com/Scatteredrain/SALI | Memory bank + **frame t+1 as released** (verified) | Fixed causal version trained; also run as released |
+| SALI (MICCAI 2024) | github.com/Scatteredrain/SALI | Memory bank + **frame t+1 as released** (verified) | Fixed causal version trained (s0 done, s1 + s2 loading) |
 | LGRNet (MICCAI 2024) | github.com/bio-mlhui/LGRNet | Clip-level global attention (**verify**) | TODO |
 | Diff-VPS (MICCAI 2024) | github.com/lydia-yllu/Diff-VPS | 5-frame clips; **no released weights** | TODO |
 | STDDNet (ICCV 2025) | github.com/C-GLGLGL/STDDNet | Non-overlapping 5-frame windows + first-frame anchor (verified in loader) | TODO |
-| CMSA-Net (MICCAI 2026) | github.com/wangtong627/CMSA-Net | Causal attention (past only) + first-frame anchor (verified in loader) | TODO |
+| CMSA-Net (MICCAI 2026) | github.com/wangtong627/CMSA-Net | Causal attention (past only) + first-frame anchor (verified in loader) | SUNSEG training (s0 done, eval in progress), s1 + s2 to follow  |
 | _Optional:_ YOLO-SAM 2 | github.com/sajjad-sh33/YOLO_SAM2 | Detector prompts SAM2 video tracking (**verify**) | Optional |
 
 ### Reference detectors, 2
@@ -436,7 +437,8 @@ size, histology, latency-exclusion flag.
 | `view_annotations.py` | `realcolon/` | Draw GT boxes on selected frames (before / onset / spread / after removal) |
 | `make_clip.py` | `realcolon/` | Render a video clip with GT boxes (`--anchor onset|end|full`, `--start/--end`, `--speed`) |
 | `build_realcolon_gt.py` | `PolypBench/polypbench/scripts/` | Ground-truth tables (boxes, lesions, videos) for all 60 videos → `artifacts/ground_truth/realcolon/`; read with `load_ground_truth()` |
-| `evaluate.py` | TODO | Maps → boxes → all metrics and breakdowns |
+| `extract_boxes.py` | `PolypBench/polypbench/scripts/` | REAL-Colon npz maps → boxes (one per connected component, peak + mean score, area), scaled to the original frame → `artifacts/boxes/<dataset>/<model_id>/<postproc>/<boxes>/<video>.csv.gz`; config `configs/boxes/cc-0.5.yaml`. ~250 frames/s per video (npz decode bound), one video per worker |
+| `evaluate_detection.py` | TODO | Boxes → frame / lesion metrics, curves, phase breakdowns (`metrics/detection.py`) |
 | Model runners | TODO | One adapter per model writing section 8 format |
 | `view_predictions.py` | `PolypBench/polypbench/scripts/` | Local frame browser for one REAL-Colon video: per-model prediction overlays + GT boxes, clickable timeline of predicted area, threshold control. Serves `127.0.0.1:8765`; open via VS Code port forwarding |
 
@@ -504,16 +506,41 @@ Done:
   37 / 101 train: **cross-check against `true-colon` in step 6.**
 
 Next:
-- [ ] **Step 6, evaluation:** `metrics/detection.py` + `evaluate_detection.py` (maps → boxes
-  scaled by each video's original size → frame / lesion metrics, curves, breakdowns; phases
-  derived here); cross-check against `true-colon` on shared metrics, incl. the latency
-  exclusions. Plan to be reviewed before building; develop on the 004-012 pilot predictions.
+- [ ] **Step 6, evaluation** (plan agreed 2026-10-26: 6a boxes, 6b metrics, 6c evaluator, 6d
+  `true-colon` cross-check).
+  - [x] **6a, maps → boxes:** `postproc/boxes.py` + `scripts/extract_boxes.py` +
+    `configs/boxes/cc-0.5.yaml` (binarize at 0.5, 8-connected components, boxes scaled from the
+    352 map to the frame, axis by axis: the model saw the whole frame resized, no letterbox).
+    Each box keeps area and both candidate scores, so score rule and minimum area are chosen
+    at evaluation without re-extracting. `tests/test_boxes.py`.
+  - [x] **6b, metrics:** `metrics/detection.py`: per-frame alarm / hit scores (TRUE-Colon:
+    hit = a box sharing a pixel with any GT box; false alarm = any box on a polyp-free frame),
+    TPR / FPR / box sensitivity over tau, tau for a target FPR, per-lesion detected /
+    persistent (≥ 50% of boxed frames) / latency (s, per-video fps) / within 1-3-5 s, per-frame
+    phases (positive, outside, inspection = unboxed frames inside a lesion's span,
+    after_removal = `after_removal_s` after a lesion's last box, clean). `tests/test_detection.py`.
+  - **Pilot finding (004-012, val, old pilot models, 1 lesion; FPR target 5%):** the **peak**
+    score is unusable: > 5% of polyp-free frames have a box with peak probability exactly 1.0
+    (uint8 255), so FPR ≤ 5% needs tau > 1 and TPR is 0. The **mean** probability over the
+    component works: tau ≈ 0.96 (EMCAD) / 0.98 (SALI), frame TPR 0.50 / 0.48, the lesion first
+    hit 0.6 s / 1.8 s after its first box, hit on ~50% of its frames. Minimum area barely
+    matters (EMCAD TPR 0.50 → 0.55 at 1% of the map, worse at 2%; SALI flat). In-patient-only
+    vs all frames: same here. One lesion only: recheck on all of val with the `-ft-s0` models.
+  - [ ] **6c, `evaluate_detection.py`:** thresholds (val FPR 5%, fixed 0.5, test-matched),
+    long-format results to `artifacts/results/`, both frame scopes.
+  - [ ] **6d, cross-check vs `true-colon`** (pilot boxes + latency-exclusion list; needs
+    `pip install true-colon`, ask first).
 - [ ] Before full runs: decode frames in a background thread in `predict.py` / `predict_sali.py`
   (EMCAD val + test ~12 h at 22 fps from originals; SALI ~35 h on one GPU, ~9 h over 4 by video).
-- [ ] Retrain models on the full SUN-SEG train set (new model ids, e.g. `pvt-cascade@sunseg-ft-s0`),
-  then rerun REAL-Colon inference. Training data loader: cap worker threads
-  (`worker_init_fn` with `cv2.setNumThreads(0)`, `torch.set_num_threads(1)`); the last run hit load ~650.
-- [ ] Pilot on 001-013, 001-014, 002-014, 003-013, 004-014 (4 cohorts, 12 lesions, 1 polyp-free video).
+- [x] Retrain on the full SUN-SEG train set (2026-10-26, user): `emcad-b2@sunseg-ft-s0`,
+  `pvt-cascade@sunseg-ft-s0`, `sali@sunseg-causal-ft-s0` (and `cmsa-net@sunseg-ft-s0`);
+  checkpoints in `artifacts/checkpoints/`, seed suffix resolved by `load_model_config`.
+- [ ] Run the `-ft-s0` models on REAL-Colon (val first, for the step 6 choices).
+- [ ] Training data loader: cap worker threads (`worker_init_fn` with `cv2.setNumThreads(0)`,
+  `torch.set_num_threads(1)`); the last training run hit load ~650.
+- [ ] Pilot on 001-013, 001-014, 002-014, 003-013, 004-014 (4 cohorts, 12 lesions, 1 polyp-free
+  video). **These are test videos:** use them only to check the pipeline runs, never to choose
+  scores, areas or thresholds (those come from val).
 - [ ] Visual sanity check: overlay predicted vs GT boxes on onset and post-removal frames
   (`view_predictions.py` once step 6 produces boxes).
 - [ ] As-released (next-frame) SALI on REAL-Colon, alongside causal.
@@ -554,7 +581,8 @@ Open decisions to settle before multi-seed runs: seeds in `model_id` tag (sectio
 
 - Anchor rule for anchor models (main: first frame of procedure; ablation: rolling).
 - Length of the "after removal" window for phase-wise false alarms.
-- Minimum component area for mask → box conversion.
+- Minimum component area for mask → box conversion (pilot: barely matters; applied at evaluation).
+- Box score: mean probability over the component (pilot: peak saturates at 1.0 on false boxes).
 - Whether to use in-house clinical videos (limited, curated) and in what role (external curated test set).
 - Final title wording (detection vs detection and segmentation).
 - Seeds in the `model_id` tag (e.g. `emcad-b2@sunseg-s1`)? Needed before multi-seed REAL-Colon runs.
