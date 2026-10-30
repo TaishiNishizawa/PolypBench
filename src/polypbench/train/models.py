@@ -1,5 +1,6 @@
 """Build trainable PyTorch models from the `train:` section of configs/models/<model_id>.yaml."""
 
+import hashlib
 import importlib
 import sys
 
@@ -39,8 +40,20 @@ def build_model(model_config, pretrained=True):
     model = cls(**kwargs)
 
     if pretrained and spec.get("pretrained_backbone"):
-        load_backbone(model.backbone, ARTIFACTS_ROOT / spec["pretrained_backbone"])
+        path = ARTIFACTS_ROOT / spec["pretrained_backbone"]
+        if "pretrained_sha256" in spec and sha256(path) != spec["pretrained_sha256"]:
+            raise RuntimeError(f"{path}: sha256 does not match pretrained_sha256 in the model config")
+        backbone = getattr(model, spec.get("backbone_attr", "backbone"))   # PraNet: model.resnet
+        load_backbone(backbone, path)
     return model
+
+
+def sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def load_backbone(backbone, path):

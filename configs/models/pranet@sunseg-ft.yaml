@@ -1,0 +1,29 @@
+model_id: pranet@sunseg-ft
+arch: pranet
+backend: onnx
+weights: checkpoints/pranet@sunseg-ft/model.onnx   # relative to artifacts_root; written by scripts/export_onnx.py (predict.py uses best.pth by default)
+source: >-
+  Trained by us on all of SUN-SEG TrainDataset, best epoch chosen on TestHardDataset/Seen,
+  with scripts/train.py and configs/train/pranet_ft.yaml (PraNet's recipe, 30 epochs);
+  PraNet code from third_party/PraNet (fork of DengPingFan/PraNet).
+input_size: 352
+input_channels: 3
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+output_index: 0                    # the export has a single output: the final head
+
+# Seed runs: <model_id>-s<N> (e.g. pranet@sunseg-ft-s0), one checkpoint folder each.
+
+train:
+  recipe: pranet_ft                # configs/train/pranet_ft.yaml (default for scripts/train.py)
+  code: third_party/PraNet         # added to sys.path
+  module: lib.PraNet_Res2Net
+  class: PraNet
+  kwargs:
+    channel: 32
+    pretrained: false              # don't load the hard-coded path in __init__; build_model loads pretrained_backbone (with a check)
+  backbone_attr: resnet            # PraNet's encoder is model.resnet
+  pretrained_backbone: checkpoints/pretrained/res2net50_v1b_26w_4s-3cf99910.pth   # ImageNet Res2Net-50 v1b, as the paper states
+  pretrained_sha256: 3cf99910a0f1a4c9c43e707958179bf928b9cc81ed9297dc960fe07d1c46139c
+  supervision: heads               # loss on all 4 maps: lateral_map_5 (global map), 4, 3, 2
+  final_output: -1                 # forward returns [map5, map4, map3, map2]; map2 (paper S3) is the prediction, as in MyTest.py

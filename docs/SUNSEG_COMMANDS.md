@@ -5,7 +5,7 @@ Logs go to `../artifacts/logs/`.
 
 | Model | Env | Train | Predict |
 |---|---|---|---|
-| EMCAD, CASCADE (2D) | `train` | `scripts/train.py` | `scripts/predict.py` (`.pth` by default) |
+| EMCAD, CASCADE, PraNet, Polyp-PVT (2D) | `train` | `scripts/train.py` | `scripts/predict.py` (`.pth` by default) |
 | SALI (causal) | `sali` | `scripts/train_sali.py` | `scripts/predict_sali.py` |
 | CMSA-Net | `sali` | `scripts/train_cmsa.py` | `scripts/predict_cmsa.py` |
 

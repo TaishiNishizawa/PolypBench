@@ -18,9 +18,26 @@ groups:
     # - mkunet@sunseg
     # - sacnet-b2@sunseg
     - sali@sunseg-causal-ft-s0
+    - sali@sunseg-causal-ft-s1
+    - sali@sunseg-causal-ft-s2
     - pvt-cascade@sunseg-ft-s0
+    - pvt-cascade@sunseg-ft-s1
+    - pvt-cascade@sunseg-ft-s2
     - emcad-b2@sunseg-ft-s0
+    - emcad-b2@sunseg-ft-s1
+    - emcad-b2@sunseg-ft-s2
     - cmsa-net@sunseg-ft-s0
+    - cmsa-net@sunseg-ft-s1
+    - cmsa-net@sunseg-ft-s2
+    - pranet@sunseg-ft-s0
+    - pranet@sunseg-ft-s1
+    - pranet@sunseg-ft-s2
+    - polyp-pvt@sunseg-ft-s0
+    - polyp-pvt@sunseg-ft-s1
+    - polyp-pvt@sunseg-ft-s2
+
+
+
 
     
     

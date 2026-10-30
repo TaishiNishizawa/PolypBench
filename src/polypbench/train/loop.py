@@ -6,10 +6,20 @@ import torch.nn.functional as F
 from polypbench.train.models import as_list, final_prediction
 
 
-def structure_loss(pred, mask):
-    """Weighted BCE + weighted IoU, with extra weight near mask boundaries (PraNet)."""
+def structure_loss(pred, mask, wbce_mode="weighted"):
+    """Weighted BCE + weighted IoU, with extra weight near mask boundaries (PraNet).
+
+    wbce_mode "legacy" reproduces the released PraNet code, which passes reduce='none':
+    a truthy legacy `reduce`, so the BCE is averaged before the boundary weights are
+    applied and the "weighted" BCE is a plain mean BCE (as SALI and CMSA-Net copied it).
+    """
     weit = 1 + 5 * torch.abs(F.avg_pool2d(mask, kernel_size=31, stride=1, padding=15) - mask)
-    wbce = F.binary_cross_entropy_with_logits(pred, mask, reduction="none")
+    if wbce_mode == "legacy":
+        wbce = F.binary_cross_entropy_with_logits(pred, mask, reduction="mean")
+    elif wbce_mode == "weighted":
+        wbce = F.binary_cross_entropy_with_logits(pred, mask, reduction="none")
+    else:
+        raise ValueError(f"wbce_mode must be 'weighted' or 'legacy', got '{wbce_mode}'")
     wbce = (weit * wbce).sum(dim=(2, 3)) / weit.sum(dim=(2, 3))
     pred = torch.sigmoid(pred)
     inter = ((pred * mask) * weit).sum(dim=(2, 3))
@@ -18,14 +28,15 @@ def structure_loss(pred, mask):
     return (wbce + wiou).mean()
 
 
-def supervised_loss(outputs, mask, supervision, final_output):
+def supervised_loss(outputs, mask, supervision, final_output, wbce_mode="weighted"):
     outputs = as_list(outputs)
+    loss = lambda o: structure_loss(o, mask, wbce_mode)
     if supervision == "heads_and_sum":      # EMCAD / SACNet: every head, plus their sum
-        return sum(structure_loss(o, mask) for o in outputs) + structure_loss(sum(outputs), mask)
-    if supervision == "heads":              # CASCADE: every head (their sum is the prediction, but not supervised)
-        return sum(structure_loss(o, mask) for o in outputs)
+        return sum(loss(o) for o in outputs) + loss(sum(outputs))
+    if supervision == "heads":              # CASCADE / PraNet: every head (CASCADE's sum is the prediction, but not supervised)
+        return sum(loss(o) for o in outputs)
     if supervision == "final_only":         # MK-UNet
-        return structure_loss(outputs[final_output], mask)
+        return loss(outputs[final_output])
     raise ValueError(f"Unknown supervision '{supervision}'")
 
 
@@ -42,7 +53,8 @@ def train_one_epoch(model, loader, optimizer, recipe, spec, device, log_every=20
                 x = F.interpolate(images, size=(size, size), mode="bilinear", align_corners=True)
                 y = F.interpolate(masks, size=(size, size), mode="nearest")
             optimizer.zero_grad()
-            loss = supervised_loss(model(x), y, spec["supervision"], spec["final_output"])
+            loss = supervised_loss(model(x), y, spec["supervision"], spec["final_output"],
+                                   recipe.get("wbce", "weighted"))
             loss.backward()
             for group in optimizer.param_groups:          # clip_gradient(): clamp each element
                 for p in group["params"]:

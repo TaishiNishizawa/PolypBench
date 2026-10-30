@@ -1,0 +1,36 @@
+# PraNet's recipe (MICCAI 2020, Sec. 2.3; MyTrain.py) under the field's SUN-SEG
+# protocol: train on all 112 TrainDataset clips and choose the best epoch on
+# TestHardDataset/Seen, like the other -ft models. Where the paper states a
+# value it is used; everything it leaves out comes from MyTrain.py. One
+# deliberate change: 30 epochs (paper 20; code range(1, 20) = 19), the same
+# as our other 2D models.
+name: pranet_ft
+dataset: sunseg               # configs/datasets/sunseg.yaml
+val_split: TestHardDataset/Seen   # train on all of TrainDataset, select the epoch on this test split
+
+epochs: 30                    # ours (paper 20, code 19), as for the other 2D models
+batch_size: 16                # paper and code
+img_size: 352                 # paper and code
+multiscale: [0.75, 1.0, 1.25] # paper and code: one optimizer step per scale, "rather than data augmentation"
+
+optimizer:
+  name: adam                  # paper and code
+  lr: 1.0e-4                  # paper and code
+  weight_decay: 0.0           # code: torch.optim.Adam(params, lr), no weight decay
+scheduler:                    # eta_min = lr: constant (the code's x0.1 decay every 50 epochs never fires)
+  name: cosine
+  eta_min: 1.0e-4
+grad_clip: 0.5                # code: clamp every gradient element to [-0.5, 0.5]
+wbce: legacy                  # code: reduce='none' makes the "weighted" BCE a plain mean BCE; kept as released
+
+augmentation:                 # none (paper: multi-scale training "rather than data augmentation")
+  rotate_limit: 90
+  rotate_p: 0.0
+  vflip_p: 0.0
+  hflip_p: 0.0
+mean: [0.485, 0.456, 0.406]   # code: ImageNet mean/std
+std: [0.229, 0.224, 0.225]
+
+val_threshold: 0.5
+num_workers: 8
+seed: 0                       # code sets none; -s<N> model ids override it

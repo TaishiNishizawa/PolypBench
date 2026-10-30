@@ -113,7 +113,10 @@ def main():
     model = build_model(model_config).to(device)
     print(f"{sum(p.numel() for p in model.parameters()) / 1e6:.2f}M parameters")
     opt_cfg = recipe["optimizer"]
-    optimizer = torch.optim.AdamW(model.parameters(), lr=opt_cfg["lr"], weight_decay=opt_cfg["weight_decay"])
+    optimizers = {"adamw": torch.optim.AdamW, "adam": torch.optim.Adam}   # PraNet: Adam, no weight decay
+    if opt_cfg["name"] not in optimizers:
+        raise SystemExit(f"optimizer.name must be one of {list(optimizers)}, got '{opt_cfg['name']}'")
+    optimizer = optimizers[opt_cfg["name"]](model.parameters(), lr=opt_cfg["lr"], weight_decay=opt_cfg["weight_decay"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=recipe["epochs"],
                                                            eta_min=recipe["scheduler"]["eta_min"])
 

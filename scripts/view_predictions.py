@@ -1,9 +1,5 @@
 """Browse a REAL-Colon video frame by frame with model predictions and GT boxes overlaid.
 
-Serves a page on this machine only (127.0.0.1). Open it from your laptop through
-the VS Code port forward (Ports tab; VS Code usually offers it), or
-`ssh -L 8765:localhost:8765 <server>`. Reads saved predictions; runs no model.
-
     python scripts/view_predictions.py --dataset realcolon_val --video 004-012 \
         --models emcad-b2@sunseg-prime sali@sunseg-causal
 

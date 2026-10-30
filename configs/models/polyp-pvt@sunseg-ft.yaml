@@ -1,0 +1,29 @@
+model_id: polyp-pvt@sunseg-ft
+arch: polyp-pvt
+backend: onnx
+weights: checkpoints/polyp-pvt@sunseg-ft/model.onnx   # relative to artifacts_root; written by scripts/export_onnx.py (predict.py uses best.pth by default)
+source: >-
+  Trained by us on all of SUN-SEG TrainDataset, best epoch chosen on TestHardDataset/Seen,
+  with scripts/train.py and configs/train/polyppvt_ft.yaml (Polyp-PVT's recipe, 30 epochs);
+  Polyp-PVT code from third_party/Polyp-PVT (fork of DengPingFan/Polyp-PVT).
+input_size: 352
+input_channels: 3
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+output_index: 0                    # the export has a single output: P1 + P2
+
+# Seed runs: <model_id>-s<N> (e.g. polyp-pvt@sunseg-ft-s0), one checkpoint folder each.
+
+train:
+  recipe: polyppvt_ft              # configs/train/polyppvt_ft.yaml (default for scripts/train.py)
+  code: third_party/Polyp-PVT      # added to sys.path
+  module: lib.pvt
+  class: PolypPVT
+  kwargs:
+    channel: 32
+    pretrained: false              # don't load ./pretrained_pth/ in __init__; build_model loads pretrained_backbone (with a check)
+  # The README's pretrained_pth/pvt_v2_b2.pth (Google Drive) is byte-identical to this file (checked 2026-10-29).
+  pretrained_backbone: checkpoints/pretrained/pvt_v2_b2.pth   # ImageNet PVTv2-b2 (whai362/PVT), loaded into model.backbone
+  pretrained_sha256: 80711cd1b37ffba12bec6c7a2a7c54efe2315ed635e6d2055fd51c3e909ede4d
+  supervision: heads               # loss on P1 (CFM) and P2 (SAM), as in Train.py
+  final_output: sum                # prediction = P1 + P2, as in Train.py's test() and Test.py

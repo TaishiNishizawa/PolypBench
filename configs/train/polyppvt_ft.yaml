@@ -1,0 +1,37 @@
+# Polyp-PVT's recipe (Dong et al., Sec. III-G and Table II; Train.py) under the
+# field's SUN-SEG protocol: train on all 112 TrainDataset clips and choose the
+# best epoch on TestHardDataset/Seen, like the other -ft models. Where the paper
+# states a value it is used; everything it leaves out comes from Train.py. One
+# deliberate change: 30 epochs (paper 100, code range(1, 100) = 99; the paper
+# reports its best result around epoch 30), the same as our other 2D models.
+# Identical to prime_ft except for wbce.
+name: polyppvt_ft
+dataset: sunseg               # configs/datasets/sunseg.yaml
+val_split: TestHardDataset/Seen   # train on all of TrainDataset, select the epoch on this test split
+
+epochs: 30                    # ours (paper 100, code 99), as for the other 2D models
+batch_size: 16                # paper and code
+img_size: 352                 # paper and code
+multiscale: [0.75, 1.0, 1.25] # paper and code: one optimizer step per scale
+
+optimizer:
+  name: adamw                 # paper and code
+  lr: 1.0e-4                  # paper and code
+  weight_decay: 1.0e-4        # paper and code
+scheduler:                    # eta_min = lr: constant (code: x0.1 at epoch 200, never reached; paper: "decay rate 0.1")
+  name: cosine
+  eta_min: 1.0e-4
+grad_clip: 0.5                # paper and code: clamp every gradient element to [-0.5, 0.5]
+wbce: legacy                  # code: reduce='none' makes the "weighted" BCE a plain mean BCE; kept as released
+
+augmentation:                 # none (code: --augmentation defaults to off)
+  rotate_limit: 90
+  rotate_p: 0.0
+  vflip_p: 0.0
+  hflip_p: 0.0
+mean: [0.485, 0.456, 0.406]   # code: ImageNet mean/std
+std: [0.229, 0.224, 0.225]
+
+val_threshold: 0.5
+num_workers: 8
+seed: 0                       # code sets none; -s<N> model ids override it

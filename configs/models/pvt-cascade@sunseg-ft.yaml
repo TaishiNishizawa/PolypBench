@@ -24,4 +24,7 @@ train:
     pretrained_path: null          # don't load in __init__; build_model loads pretrained_backbone (with a check)
   pretrained_backbone: checkpoints/pretrained/pvt_v2_b2.pth   # ImageNet PVTv2-b2, loaded into model.backbone
   supervision: heads               # loss on each of the 4 heads (as in CASCADE's train_polyp.py)
+  # Known deviation: CASCADE's train_polyp.py passes reduce='none' (plain mean BCE, see
+  # polypbench.train.loop.structure_loss); prime_ft trains the truly weighted BCE the papers
+  # describe. Kept for the -ft seeds (decided 2026-10-29); documented, not retrained.
   final_output: sum                # prediction = p1 + p2 + p3 + p4 (CASCADE's additive aggregation)

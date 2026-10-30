@@ -223,30 +223,34 @@ beyond the colon"); TRUE-Colon removes it. We report both.
 SUN-SEG; automatic (no human prompts). **Excluded:** WavePolyp, HFSTI-Net (ICLR 2026) and MAST
 (no public code); SAM2 / MedSAM2 used directly (need prompts); PolyMamba (repo unreachable when checked).
 
-### 2D (single-image), 7
+### Priority: 2D (single-image), 6
 | Model | Repo | Status | Why |
 |---|---|---|---|
-| PraNet (MICCAI 2020) | github.com/DengPingFan/PraNet | TODO | Root of most later polyp models |
-| Polyp-PVT | github.com/DengPingFan/Polyp-PVT | TODO | Standard transformer baseline |
-| CASCADE | github.com/SLDGroup/CASCADE | Trained + SUN-SEG eval (s0 done, s1 + s2 loading) | Lab model |
-| EMCAD (CVPR 2024) | github.com/SLDGroup/EMCAD | Trained + SUN-SEG eval (s0 done, s1 + s2 loading) | Lab model |
-| MK-UNet | github.com/SLDGroup/MK-UNet | Trained + SUN-SEG eval | Lab model (lightweight) |
+| PraNet (MICCAI 2020) | github.com/DengPingFan/PraNet | 3 Seed SUNSEG training ... | Root of most later polyp models |
+| Polyp-PVT | github.com/DengPingFan/Polyp-PVT | 3 Seed SUNSEG training ... | Standard transformer baseline |
+| EMCAD (CVPR 2024) | github.com/SLDGroup/EMCAD | Trained + SUN-SEG eval (3 seeds) | Lab model |
 | SAM2-UNet | github.com/WZH0120/SAM2-UNet | TODO | Foundation-model encoder |
+| SSFormer 2D | github.com/shiwt03/SSformer | TODO | Generic strong baseline |
 | nnU-Net 2D | github.com/MIC-DKFZ/nnUNet | TODO | Generic strong baseline |
-| ssFormer 2D | github.com/shiwt03/SSformer | TODO | Generic strong baseline |
-| _Optional:_ MEGANet (WACV 2024) / HSNet | github.com/UARK-AICV/MEGANet, github.com/baiboat/HSNet | Optional | Extra recent architecture |
 
-### Video ("3D" = 2D + time), 7
+### Priority: video ("3D" = 2D + time), 4
 | Model | Repo | How it uses other frames | Status |
 |---|---|---|---|
 | PNS+ (MIR 2022) | github.com/GewelsJI/VPS | First frame of clip as anchor + 5-frame window | TODO |
-| FLA-Net (MICCAI 2023) | github.com/jhl-Det/FLA-Net | Neighboring frames (**verify direction**) | TODO |
-| SALI (MICCAI 2024) | github.com/Scatteredrain/SALI | Memory bank + **frame t+1 as released** (verified) | Fixed causal version trained (s0 done, s1 + s2 loading) |
-| LGRNet (MICCAI 2024) | github.com/bio-mlhui/LGRNet | Clip-level global attention (**verify**) | TODO |
-| Diff-VPS (MICCAI 2024) | github.com/lydia-yllu/Diff-VPS | 5-frame clips; **no released weights** | TODO |
-| STDDNet (ICCV 2025) | github.com/C-GLGLGL/STDDNet | Non-overlapping 5-frame windows + first-frame anchor (verified in loader) | TODO |
 | CMSA-Net (MICCAI 2026) | github.com/wangtong627/CMSA-Net | Causal attention (past only) + first-frame anchor (verified in loader) | SUNSEG training (s0 done, eval in progress), s1 + s2 to follow  |
-| _Optional:_ YOLO-SAM 2 | github.com/sajjad-sh33/YOLO_SAM2 | Detector prompts SAM2 video tracking (**verify**) | Optional |
+| SALI (MICCAI 2024) | github.com/Scatteredrain/SALI | Memory bank + **frame t+1 as released** (verified) | Fixed causal version trained (3 seeds) |
+| STDDNet (ICCV 2025) | github.com/C-GLGLGL/STDDNet | Non-overlapping 5-frame windows + first-frame anchor (verified in loader) | TODO |
+
+### Extra (only if time allows)
+| Model | Type | Repo | Notes | Status |
+|---|---|---|---|---|
+| CASCADE | 2D | github.com/SLDGroup/CASCADE | Lab model | Trained + SUN-SEG eval (3 seeds) |
+| MK-UNet | 2D | github.com/SLDGroup/MK-UNet | Lab model (lightweight) | Trained + SUN-SEG eval |
+| MEGANet (WACV 2024) / HSNet | 2D | github.com/UARK-AICV/MEGANet, github.com/baiboat/HSNet | Extra recent architecture | Optional |
+| FLA-Net (MICCAI 2023) | Video | github.com/jhl-Det/FLA-Net | Neighboring frames (**verify direction**) | TODO |
+| LGRNet (MICCAI 2024) | Video | github.com/bio-mlhui/LGRNet | Clip-level global attention (**verify**) | TODO |
+| Diff-VPS (MICCAI 2024) | Video | github.com/lydia-yllu/Diff-VPS | 5-frame clips; **no released weights** | TODO |
+| YOLO-SAM 2 | Video | github.com/sajjad-sh33/YOLO_SAM2 | Detector prompts SAM2 video tracking (**verify**) | Optional |
 
 ### Reference detectors, 2
 YOLOv11-M and RT-DETR (Ultralytics), trained on boxes derived from SUN-SEG masks, same split.
@@ -551,8 +555,8 @@ Next:
 Open decisions to settle before multi-seed runs: seeds in `model_id` tag (section 12).
 
 ### Tier 1: next 2-3 weeks (models)
-- [ ] Clone and train remaining models on SUN-SEG under the section 6 protocol (3 seeds): PraNet, Polyp-PVT, SAM2-UNet, nnU-Net, PNS+, FLA-Net, LGRNet, Diff-VPS, STDDNet, CMSA-Net; detectors YOLOv11-M, RT-DETR.
-- [ ] Per model: record commit and deviations; verify frame access (FLA-Net, LGRNet, Diff-VPS, YOLO-SAM 2 still unverified); remove per-frame normalization.
+- [ ] Clone and train the remaining priority models on SUN-SEG under the section 6 protocol (3 seeds): PraNet, Polyp-PVT, SAM2-UNet, SSFormer, nnU-Net, PNS+, STDDNet, CMSA-Net (s1, s2); detectors YOLOv11-M, RT-DETR. Extra models (section 6) only if time allows.
+- [ ] Per model: record commit and deviations; remove per-frame normalization. (Frame access still unverified for the extra models FLA-Net, LGRNet, Diff-VPS, YOLO-SAM 2.)
 - [ ] Reproduce reported SUN-SEG numbers with released weights (Reported vs Reproduced).
 - [ ] SUN-SEG evaluation under: standard protocol; corrected protocol (fixed val threshold, no normalization, causal); frame metrics with polyp-free clips.
 - [ ] One with-negatives training configuration per model family.
