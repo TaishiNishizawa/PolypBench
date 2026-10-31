@@ -1,18 +1,22 @@
 """Probability maps -> boxes, for box-level (detection) evaluation on REAL-Colon.
 
-One box per connected component of the map thresholded at the config's `threshold`,
+One box per connected component of the map thresholded at the config's `threshold`
+(a probability; applied to the stored logits as logit >= log(t / (1 - t)), 0 for 0.5),
 found at the model's output resolution (the stored npz maps) and scaled to the
-frame's original pixels. Every box keeps two candidate scores, the peak and the
-mean probability over its component, and its area as a fraction of the map, so
-the score rule and the minimum area are evaluation choices (metrics/detection.py)
-and never need a re-extraction. Configured in configs/boxes/.
+frame's original pixels. Every box keeps three candidate scores and its area as a
+fraction of the map, so the score rule and the minimum area are evaluation choices
+(metrics/detection.py) and never need a re-extraction. Configured in configs/boxes/.
 
 Stored per sequence as one table, one row per box (frames with no box have no row):
 
     <artifacts_root>/boxes/<dataset>/<model_id>/<postproc>/<boxes>/<sequence>.csv.gz
         frame, xmin, ymin, xmax, ymax   original pixels, 0-based, inclusive (as the ground truth)
         area                            component pixels / map pixels
-        peak, mean                      probability over the component, in [0, 1]
+        peak                            highest logit in the component
+        mean_logit, mean_prob           mean logit / mean probability over the component
+
+Scores in logits are on each model's own scale (e.g. CASCADE sums four heads' logits),
+so they rank boxes within a model but don't compare across models.
 
 The file's presence marks the sequence done (written to a temporary name, then renamed).
 """
@@ -25,11 +29,12 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from polypbench.io.predictions import sigmoid
 from polypbench.paths import ARTIFACTS_ROOT, CONFIG_DIR
 
 BOXES_ROOT = ARTIFACTS_ROOT / "boxes"
 BOXES_CONFIG_DIR = CONFIG_DIR / "boxes"
-COLUMNS = ["frame", "xmin", "ymin", "xmax", "ymax", "area", "peak", "mean"]
+COLUMNS = ["frame", "xmin", "ymin", "xmax", "ymax", "area", "peak", "mean_logit", "mean_prob"]
 
 
 def load_boxes_config(name):
@@ -50,22 +55,24 @@ def scale_box(x0, y0, x1, y1, map_hw, frame_wh):
             min(w - 1, int(np.ceil((x1 + 1) * sx)) - 1), min(h - 1, int(np.ceil((y1 + 1) * sy)) - 1))
 
 
-def extract_boxes(prob, frame_wh, threshold, connectivity=8, min_area_px=1):
-    """prob: uint8 H x W map (0-255) as stored. Returns [(xmin, ymin, xmax, ymax, area, peak, mean), ...]."""
-    mask = prob >= threshold * 255                      # same as prob / 255 >= threshold
+def extract_boxes(logits, frame_wh, threshold, connectivity=8, min_area_px=1):
+    """logits: H x W logit map as stored. Returns [(xmin, ymin, xmax, ymax, area, peak, mean_logit, mean_prob), ...]."""
+    logits = np.asarray(logits, dtype=np.float32)
+    mask = logits >= np.log(threshold / (1 - threshold))     # same as sigmoid(logits) >= threshold
     n, labels, stats, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=connectivity)
     if n == 1:
         return []
-    labs, vals = labels[mask], prob[mask]
-    sums = np.bincount(labs, weights=vals, minlength=n)
-    peaks = np.zeros(n, np.uint8)
+    labs, vals = labels[mask], logits[mask]
+    logit_sums = np.bincount(labs, weights=vals, minlength=n)
+    prob_sums = np.bincount(labs, weights=sigmoid(vals), minlength=n)
+    peaks = np.full(n, -np.inf, np.float32)
     np.maximum.at(peaks, labs, vals)
     boxes = []
     for k in range(1, n):
         x, y, bw, bh, area = stats[k]
         if area >= min_area_px:
-            boxes.append((*scale_box(x, y, x + bw - 1, y + bh - 1, prob.shape, frame_wh),
-                          area / prob.size, peaks[k] / 255.0, sums[k] / area / 255.0))
+            boxes.append((*scale_box(x, y, x + bw - 1, y + bh - 1, logits.shape, frame_wh),
+                          area / logits.size, float(peaks[k]), logit_sums[k] / area, prob_sums[k] / area))
     return boxes
 
 
@@ -80,7 +87,7 @@ def boxes_path(dataset, model_id, postproc, boxes, sequence):
 def write_sequence_boxes(path, rows):
     """rows: [(frame, xmin, ymin, xmax, ymax, area, peak, mean), ...]."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    table = pd.DataFrame(rows, columns=COLUMNS).round({"area": 6, "peak": 4, "mean": 4})
+    table = pd.DataFrame(rows, columns=COLUMNS).round({"area": 6, "peak": 4, "mean_logit": 4, "mean_prob": 6})
     tmp = path.with_name(path.name + ".tmp")
     table.to_csv(tmp, index=False, compression="gzip")
     os.replace(tmp, path)

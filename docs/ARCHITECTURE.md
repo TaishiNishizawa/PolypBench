@@ -124,21 +124,27 @@ These are the decisions the rest of the codebase is built on. Changing one
 means touching every stage.
 
 1. **Predictions on disk are the contract between stages.** Each one is a
-   single-channel `uint8` probability map (0–255, raw sigmoid, never min-max
-   normalized), one per frame, under
+   single-channel map per frame, never min-max normalized, under
    `artifacts/predictions/<dataset>/<model_id>/<postproc>/<sequence>/`, with a
    `run.json` alongside. Only `io/predictions.py` reads or writes them. Writers
    use `open_sequence(...)`, which picks the format; PNGs are read per frame
-   (`read_prediction(frame_path(...))`), npz per sequence (`read_sequence(...)`).
-   Probabilities are saved, not binary masks, so threshold-sweep metrics stay
-   possible. The encoding depends on the dataset's size:
+   (`read_prediction(frame_path(...))`), npz per chunk (`read_chunk(...)`,
+   logits) or per sequence (`read_sequence(...)`, probabilities). Soft maps are
+   saved, not binary masks, so threshold-sweep metrics stay possible. The
+   encoding depends on the dataset:
    - **In-house, SUN-SEG:** one PNG per frame, `<frame:06d>.png`, at the
-     original frame resolution.
+     original frame resolution: the probability as `uint8` (0–255, raw sigmoid).
    - **REAL-Colon** (~1M frames for val + test): `chunk_<k:04d>.npz`, up to
-     2,000 frames each (`frames`: int32 frame ids, `probs`: uint8 N×H×W), at
-     the **model's own output resolution**: whatever its forward pass returns
-     as the final prediction, after the model's own upsampling (learned or
-     fixed) and before any resizing by us (352×352 for EMCAD and SALI).
+     2,000 frames each (`frames`: int32 frame ids, `logits`: float16 N×H×W),
+     at the **model's own output resolution**: whatever its forward pass
+     returns as the final prediction, after the model's own upsampling (learned
+     or fixed) and before any resizing by us (352×352 for EMCAD and SALI).
+     **Logits, not probabilities** (since 2026-10-30): exactly what the model's
+     sigmoid is applied to (for CASCADE and Polyp-PVT the sum of their heads).
+     Probabilities tie at the top (uint8 stores everything above p = 0.998 as
+     255; float32 reaches 1.0 near logit 17), and on REAL-Colon most false
+     regions are that confident, so box scores need the logits. Earlier chunks
+     (`probs`: uint8) are still read, as logits saturated at about ±16.
      `run.json` records the map size; the evaluator scales to each video's
      frame size. Downsampling to 176 px was measured to lose ~8% of connected
      components (small fragments), which matters for mask→box extraction.

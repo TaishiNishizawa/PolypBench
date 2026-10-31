@@ -61,7 +61,8 @@ def main():
     model = load_sali(config)
     transform = build_transform(config)
 
-    full_res = predictions.storage_format(dataset.name) == "png"   # npz keeps SALI's 352x352 output
+    # png: probabilities upsampled to the frame; npz: SALI's own 352x352 logits, before the sigmoid
+    npz = predictions.storage_format(dataset.name) == "npz"
     started = datetime.now().isoformat(timespec="seconds")
     selected = [dataset[name] for name in args.sequences] if args.sequences else list(dataset)
     for seq in selected:
@@ -70,8 +71,9 @@ def main():
             continue
         t0 = time.time()
         writer = predictions.open_sequence(dataset.name, model_id, POSTPROC, seq.name)
-        for idx, prob in predict_sequence(model, seq, transform, config["mem_freq"], config["partner"], full_res):
-            writer.write(idx, prob)
+        for idx, out in predict_sequence(model, seq, transform, config["mem_freq"], config["partner"],
+                                         full_res=not npz, return_logits=npz):
+            writer.write(idx, out)
         writer.close()
         dt = time.time() - t0
         print(f"[{model_id}] {seq.name}: {seq.n_frames} frames in {dt:.1f}s ({seq.n_frames / dt:.1f} fps)")

@@ -3,11 +3,15 @@
 For each model (boxes from scripts/extract_boxes.py), over the given videos:
   1. how many boxes, per frame, and the share of frames with any box, by phase
      (positive, outside, inspection, after_removal, clean; see metrics/detection.py)
-  2. area and score (peak, mean) of boxes touching a ground-truth box vs boxes on
-     polyp-free frames
+  2. area and scores (peak logit, mean logit, mean probability) of boxes touching a
+     ground-truth box vs boxes on polyp-free frames, and how many polyp-free frames have
+     a box whose peak a uint8 probability would have stored as 255 (p >= 0.998)
   3. for each score: the tau giving --target-fpr on polyp-free frames (all frames and
      in-patient only), with frame TPR and box sensitivity there
-  4. per lesion at the in-patient mean-score tau: detected, hit fraction, latency
+  4. per lesion at the in-patient mean_prob tau: detected, hit fraction, latency
+
+Logit scores are on each model's own scale: compare operating points (TPR at a
+given FPR), not tau values, across models.
 
 Use val videos: anything learned here informs evaluation choices.
 
@@ -21,6 +25,8 @@ import argparse
 import numpy as np
 import pandas as pd
 
+from polypbench.io.predictions import prob_to_logit
+
 from polypbench.data.realcolon import SPLITS, load_realcolon_config
 from polypbench.data.realcolon_gt import load_ground_truth
 from polypbench.metrics import detection as d
@@ -28,6 +34,7 @@ from polypbench.models import resolve_models
 from polypbench.postproc.boxes import read_boxes
 
 QUANTILES = [0.1, 0.25, 0.5, 0.75, 0.9]
+UINT8_TOP = float(prob_to_logit(254.5 / 255))   # logit above which uint8 probabilities stored 255 (~6.2)
 
 
 def quantiles(values, scale=1.0, digits=3):
@@ -53,9 +60,11 @@ def summarize(pred, gt, frames, args):
     print(f"  area % of map  touching: {quantiles(touching['area'], 100)}   polyp-free: {quantiles(negative['area'], 100)}")
     for score in d.SCORES:
         print(f"  {score:13} touching: {quantiles(touching[score])}   polyp-free: {quantiles(negative[score])}")
-    for score in d.SCORES:
-        saturated = (negative[score] >= 1.0).groupby([negative["video"], negative["frame"]]).any()
-        print(f"  polyp-free frames with a box of {score} = 1.0: {saturated.sum() / (~frames['positive']).sum():.1%}")
+    saturated = (negative["peak"] >= UINT8_TOP).groupby([negative["video"], negative["frame"]]).any()
+    print(f"  polyp-free frames with a box whose peak uint8 would store as 255 (logit >= {UINT8_TOP:.2f}): "
+          f"{saturated.sum() / (~frames['positive']).sum():.1%}")
+    for label, boxes in (("touching", touching), ("polyp-free", negative)):
+        print(f"  {label:10} boxes with peak >= {UINT8_TOP:.2f}: {(boxes['peak'] >= UINT8_TOP).mean():.1%}")
 
     print(f"\nat FPR <= {args.target_fpr:.0%} (min area {args.min_area:.2%} of map):")
     lesion_tau = None
@@ -66,14 +75,14 @@ def summarize(pred, gt, frames, args):
         for scope, sub in (("all frames", scored), ("in-patient", scored[scored["in_patient"]])):
             tau = d.threshold_for_fpr(sub, args.target_fpr)
             r = d.frame_rates(sub, [tau], lf).iloc[0]
-            print(f"  {score:4} {scope:10}  tau {tau:.4f}  FPR {r['fpr']:.3f}  frame TPR {r['tpr']:.3f}  "
+            print(f"  {score:10} {scope:10}  tau {tau:8.4f}  FPR {r['fpr']:.3f}  frame TPR {r['tpr']:.3f}  "
                   f"box sensitivity {r['box_sensitivity']:.3f}")
-            if score == "mean" and scope == "in-patient":
-                lesion_tau = tau
-    m = d.lesion_metrics(lf, gt.lesions, gt.videos, lesion_tau)
+            if score == "mean_prob" and scope == "in-patient":
+                lesion_tau, lesion_frames = tau, lf
+    m = d.lesion_metrics(lesion_frames, gt.lesions, gt.videos, lesion_tau)
     cols = ["unique_id", "n_boxed_frames", "detected", "hit_frac", "persistent", "latency_s", "within_1s",
             "within_3s", "latency_excluded", "size_mm", "histology_class"]
-    print(f"\nlesions at mean tau {lesion_tau:.4f} (in-patient):")
+    print(f"\nlesions at mean_prob tau {lesion_tau:.4f} (in-patient):")
     print(m[cols].round(3).to_string(index=False) if len(m) else "  (no lesions in these videos)")
 
 

@@ -1,9 +1,12 @@
-"""Run models over a dataset and save a probability map for every frame.
+"""Run models over a dataset and save a prediction map for every frame.
 
 Each model runs once per sequence; every requested post-processing variant is
 applied to that same model output and saved separately (see
-polypbench/io/predictions.py for the layout: PNGs at frame resolution, or npz
-chunks at model resolution for REAL-Colon). Runs whose run.json already
+polypbench/io/predictions.py for the layout: probability PNGs at frame
+resolution, or npz chunks of logits at model resolution for REAL-Colon).
+Post-processing works on probabilities, so a post-processed npz holds the
+logits of the post-processed probabilities, which saturate at about +-16;
+"none" stores the model's own logits. Runs whose run.json already
 exists are skipped unless --overwrite is given; for REAL-Colon, finished
 sequences of an interrupted run are skipped too.
 
@@ -53,6 +56,7 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads, backend, se
 
     model = load_model(model_id, threads=threads, backend=backend)
     postprocs = {name: load_postproc(name) for name in todo}
+    npz = predictions.storage_format(dataset.name) == "npz"
     started = datetime.now().isoformat(timespec="seconds")
     selected = [dataset[name] for name in sequences] if sequences else list(dataset)
 
@@ -67,10 +71,15 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads, backend, se
                 postprocs[name].reset()
         writers = {name: predictions.open_sequence(dataset.name, model_id, name, seq.name) for name in names}
         for idx, rgb in seq.frames():
-            prob = model.predict(rgb)
+            logits = model.predict_logits(rgb)
+            prob = predictions.sigmoid(logits)
             for name in names:
                 post = postprocs[name]
-                out = prob if post is None else post(prob, rgb)
+                if post is None:
+                    out = logits if npz else prob
+                else:
+                    out = post(prob, rgb)
+                    out = predictions.prob_to_logit(out) if npz else out
                 writers[name].write(idx, out, rgb.shape[:2])   # png: resized to the frame; npz: kept as is
         for writer in writers.values():
             writer.close()

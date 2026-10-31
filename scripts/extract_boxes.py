@@ -37,22 +37,22 @@ def git_commit():
 
 
 def extract_video(job, dataset, boxes_name, config):
-    """job: (model_id, postproc, video, (width, height)). Returns (job, n_frames, n_boxes, seconds)."""
+    """job: (model_id, postproc, video, (width, height)). Returns (job, n_frames, n_boxes, values, seconds)."""
     cv2.setNumThreads(1)
     model_id, postproc, video, frame_wh = job
     t0 = time.time()
     rows, n_frames = [], 0
     info = predictions.sequence_info(dataset, model_id, postproc, video)
     for k in range(info["n_chunks"]):
-        frames, probs = predictions.read_chunk(dataset, model_id, postproc, video, k)
-        for frame, prob in zip(frames, probs):
+        frames, logits = predictions.read_chunk(dataset, model_id, postproc, video, k)
+        for frame, lg in zip(frames, logits):
             rows += [(int(frame), *box) for box in extract_boxes(
-                prob, frame_wh, config["threshold"], config["connectivity"], config["min_area_px"])]
+                lg, frame_wh, config["threshold"], config["connectivity"], config["min_area_px"])]
         n_frames += len(frames)
     if n_frames != info["n_frames"]:
         raise ValueError(f"{model_id}/{postproc}/{video}: read {n_frames} frames, done.json says {info['n_frames']}")
     write_sequence_boxes(boxes_path(dataset, model_id, postproc, boxes_name, video), rows)
-    return job, n_frames, len(rows), time.time() - t0
+    return job, n_frames, len(rows), info["values"], time.time() - t0
 
 
 def main():
@@ -88,9 +88,10 @@ def main():
     started = datetime.now().isoformat(timespec="seconds")
     work = partial(extract_video, dataset=args.dataset, boxes_name=args.boxes, config=config)
     with Pool(min(args.workers, max(1, len(jobs)))) as pool:
-        for (model_id, postproc, video, _), n_frames, n_boxes, dt in pool.imap_unordered(work, jobs):
+        for (model_id, postproc, video, _), n_frames, n_boxes, values, dt in pool.imap_unordered(work, jobs):
+            old = "  [old uint8 probabilities: scores saturate]" if values != "logit_f16" else ""
             print(f"[{model_id}/{postproc}] {video}: {n_frames:,} frames, {n_boxes:,} boxes "
-                  f"({n_boxes / n_frames:.2f}/frame) in {dt:.0f}s", flush=True)
+                  f"({n_boxes / n_frames:.2f}/frame) in {dt:.0f}s{old}", flush=True)
 
     for model_id, postproc in runs:
         if not all(boxes_path(args.dataset, model_id, postproc, args.boxes, v).exists() for v in all_videos):

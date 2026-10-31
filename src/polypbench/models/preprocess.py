@@ -8,6 +8,8 @@ scale to [0, 1], normalize with the config's mean/std.
 import cv2
 import numpy as np
 
+from polypbench.io.predictions import sigmoid
+
 
 def preprocess(rgb, input_size, input_channels, mean, std):
     """uint8 HxWx3 RGB frame -> float32 1xCxSxS network input."""
@@ -21,10 +23,14 @@ def preprocess(rgb, input_size, input_channels, mean, std):
     return np.ascontiguousarray(img.transpose(2, 0, 1)[None], dtype=np.float32)
 
 
-def to_probability(model_id, logits):
-    """Squeezed single-channel logits -> float32 SxS probability map."""
-    raw_shape = logits.shape
-    logits = np.squeeze(logits).astype(np.float32)
+def to_logits(model_id, output):
+    """Network output (1x1xSxS or similar) -> float32 SxS logit map: what the sigmoid is applied to."""
+    logits = np.squeeze(output).astype(np.float32)
     if logits.ndim != 2:
-        raise ValueError(f"{model_id}: expected a single-channel output, got shape {raw_shape}")
-    return 1.0 / (1.0 + np.exp(-np.clip(logits, -50.0, 50.0)))   # clip: avoid exp overflow
+        raise ValueError(f"{model_id}: expected a single-channel output, got shape {output.shape}")
+    return logits
+
+
+def to_probability(model_id, output):
+    """Network output -> float32 SxS probability map."""
+    return sigmoid(to_logits(model_id, output))

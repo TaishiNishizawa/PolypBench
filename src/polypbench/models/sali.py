@@ -75,11 +75,12 @@ def with_partner(frames, partner):
 
 
 @torch.no_grad()
-def predict_sequence(model, seq, transform, mem_freq, partner, full_res=True):
+def predict_sequence(model, seq, transform, mem_freq, partner, full_res=True, return_logits=False):
     """Yield (index, probability map) for every frame of `seq`.
 
     full_res: upsample the logits to the frame size before the sigmoid (for
     PNG predictions and Dice); False keeps SALI's own output size (352x352).
+    return_logits: yield the logit map instead (before the sigmoid), for npz storage.
     """
     model.mem_bank.clear_memory()
     for idx, rgb, other in with_partner(seq.frames(), partner):
@@ -93,4 +94,4 @@ def predict_sequence(model, seq, transform, mem_freq, partner, full_res=True):
         logits = out[-1]
         if full_res:
             logits = F.interpolate(logits, size=rgb.shape[:2], mode="bilinear", align_corners=False)
-        yield idx, logits.sigmoid().squeeze().cpu().numpy()
+        yield idx, (logits if return_logits else logits.sigmoid()).squeeze().float().cpu().numpy()

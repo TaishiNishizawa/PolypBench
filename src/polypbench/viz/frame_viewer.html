@@ -96,7 +96,7 @@ function render() {
     if (+$("frame").value !== frame) return;
     for (const m of meta.models) {
       const st = s.models[m.id];
-      $(`stat-${m.id}`).textContent = `peak ${st.peak.toFixed(3)} · area ≥ ${(+t).toFixed(2)}: ${(100 * st.area).toFixed(2)}% of frame`;
+      $(`stat-${m.id}`).textContent = `peak ${st.peak.toFixed(3)} (logit ${st.peak_logit.toFixed(2)}) · area ≥ ${(+t).toFixed(2)}: ${(100 * st.area).toFixed(2)}% of frame`;
     }
   });
   drawTimeline();

@@ -19,8 +19,8 @@ from polypbench.viz.overlays import PRED_COLOR, draw_box, overlay
 
 PAGE = Path(__file__).with_name("frame_viewer.html")
 SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]   # categorical slots, fixed order
-TIMELINE_THRESHOLD = 128                                      # uint8 for p >= 0.5
-CACHED_CHUNKS = 6                                             # ~250 MB each when decompressed
+TIMELINE_THRESHOLD = 0.0                                      # logit for p >= 0.5
+CACHED_CHUNKS = 6                                             # ~500 MB each when decompressed (float16)
 KEEP_ALL_GB = 16      # keep every chunk in memory (instant jumps) if they fit; a cold chunk takes ~10 s
 
 
@@ -42,7 +42,7 @@ class FrameViewer:
             if info["n_frames"] != self.n_frames:
                 raise ValueError(f"{model_id}: {info['n_frames']} predicted frames, video has {self.n_frames}")
             self.models.append(model_id)
-            map_bytes = info["map_hw"][0] * info["map_hw"][1]
+            map_bytes = info["map_hw"][0] * info["map_hw"][1] * 2   # float16 logits (old uint8 chunks are read as float16)
         self.memory_gb = self.n_frames * map_bytes * len(self.models) / 1e9
         self.keep_all = self.memory_gb <= KEEP_ALL_GB
         self._chunks, self._lock = OrderedDict(), threading.Lock()
@@ -66,18 +66,22 @@ class FrameViewer:
         n_chunks = predictions.sequence_info(self.dataset, model_id, self.postproc, self.video)["n_chunks"]
         area = np.zeros(self.n_frames, dtype=np.int16)
         for k in range(n_chunks):
-            frames, probs = self._chunk(model_id, k) if self.keep_all else \
+            frames, logits = self._chunk(model_id, k) if self.keep_all else \
                 predictions.read_chunk(self.dataset, model_id, self.postproc, self.video, k)
-            area[frames] = np.rint((probs >= TIMELINE_THRESHOLD).mean(axis=(1, 2)) * 1000)
+            area[frames] = np.rint((logits >= TIMELINE_THRESHOLD).mean(axis=(1, 2)) * 1000)
         return area
 
-    def prob(self, model_id, index):
-        """float32 probability map at model resolution for one frame."""
-        frames, probs = self._chunk(model_id, index // predictions.CHUNK_SIZE)
+    def logits(self, model_id, index):
+        """float32 logit map at model resolution for one frame."""
+        frames, logits = self._chunk(model_id, index // predictions.CHUNK_SIZE)
         pos = index - int(frames[0])
         if not (0 <= pos < len(frames) and frames[pos] == index):   # writer keeps CHUNK_SIZE frames per chunk, in order
             raise KeyError(f"frame {index} not where expected in {model_id}'s chunks")
-        return probs[pos].astype(np.float32) / 255.0
+        return logits[pos].astype(np.float32)
+
+    def prob(self, model_id, index):
+        """float32 probability map at model resolution for one frame."""
+        return predictions.sigmoid(self.logits(model_id, index))
 
     def meta(self):
         boxed = np.zeros(self.n_frames, dtype=bool)
@@ -93,8 +97,10 @@ class FrameViewer:
     def stats(self, index, threshold):
         out = {"boxes": [list(b) for b in self.boxes.get(index, [])], "models": {}}
         for m in self.models:
-            p = self.prob(m, index)
-            out["models"][m] = {"peak": round(float(p.max()), 3), "area": round(float((p >= threshold).mean()), 4)}
+            lg = self.logits(m, index)
+            p = predictions.sigmoid(lg)
+            out["models"][m] = {"peak": round(float(p.max()), 3), "peak_logit": round(float(lg.max()), 2),
+                                "area": round(float((p >= threshold).mean()), 4)}
         return out
 
     def render(self, model_id, index, threshold, show_gt=True):

@@ -7,7 +7,8 @@ predictor (polypbench.models.pth).
 import numpy as np
 import onnxruntime as ort
 
-from polypbench.models.preprocess import preprocess, to_probability
+from polypbench.io.predictions import sigmoid
+from polypbench.models.preprocess import preprocess, to_logits
 
 
 class OnnxPredictor:
@@ -38,8 +39,12 @@ class OnnxPredictor:
             print(f"[WARN] {model_id} is running on CPU (active providers: {self.providers})")
         self.input_name = self.session.get_inputs()[0].name
 
-    def predict(self, rgb):
-        """Return the foreground probability map (float32 SxS, values in [0, 1])."""
+    def predict_logits(self, rgb):
+        """Return the foreground logit map (float32 SxS): the network's final output, before the sigmoid."""
         x = preprocess(rgb, self.input_size, self.input_channels, self.mean, self.std)
         outputs = self.session.run(None, {self.input_name: x})
-        return to_probability(self.model_id, outputs[self.output_index])
+        return to_logits(self.model_id, outputs[self.output_index])
+
+    def predict(self, rgb):
+        """Return the foreground probability map (float32 SxS, values in [0, 1])."""
+        return sigmoid(self.predict_logits(rgb))

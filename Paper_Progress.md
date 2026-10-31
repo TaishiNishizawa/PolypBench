@@ -86,7 +86,7 @@ limitations section names temporal models and more lesions as open; we cover bot
 | Original frames | NAS, read-only (all 60 videos) | ~296 KB/frame; ~285 GB val + test |
 | Local copy of originals (what models read) | `/mnt/dm-3/taishi/realcolon` (val + test frames, all metadata and annotations); `~/data/REAL-Colon` points here | ~285 GB |
 | Frame cache (section 7) | `/mnt/dm-3/taishi/realcolon-cache/L640` (local) | ~140 KB/frame; 134 GB val + test (built) |
-| Predictions (section 8) | `/mnt/dm-3/taishi/polypbench-artifacts/predictions` (local), symlinked as `artifacts/predictions/realcolon_<split>` | ≤7-9 GB per run; ≤350-450 GB for ~50 runs |
+| Predictions (section 8) | `/mnt/dm-3/taishi/polypbench-artifacts/predictions` (local), symlinked as `artifacts/predictions/realcolon_<split>` | uint8 estimate was ≤7-9 GB per run; float16 logits (2026-10-30) larger: **remeasure on 004-012** |
 | Backup of predictions | NAS `/sld-shared/home/tn23794/polypbench-artifacts` (rsync after each run) | same |
 
 Predictions moved to dm-3 as the main copy on 2026-10-22 (before any were written): same
@@ -102,6 +102,7 @@ decide where things physically live, so moving storage never needs a code change
 | `~/data/REAL-Colon` | `/mnt/dm-3/taishi/realcolon` (local copy, 2026-10-22: val + test frames, all metadata and annotations; train frames only on the NAS at `/sld-shared/home/tn23794/realcolon`) |
 | `~/data/REAL-Colon-cache` | `/mnt/dm-3/taishi/realcolon-cache` |
 | `artifacts/predictions/realcolon_{val,test}` | `/mnt/dm-3/taishi/polypbench-artifacts/predictions/realcolon_{val,test}` |
+| `artifacts/boxes` (2026-10-30) | `/mnt/dm-3/taishi/polypbench-artifacts/boxes` |
 
 These links live outside git (in `data_root` and the `artifacts/` sibling), so this table is
 their only record; recreate them with `ln -sn <target> <link>` on a new machine.
@@ -368,7 +369,15 @@ artifacts/predictions/<dataset>/<model_id>/<postproc>/   # dataset = realcolon_v
 
 Each `chunk_*.npz` contains:
 - `frames`: int32 array (N,), REAL-Colon frame ids, ascending (0-based, = frame index).
-- `probs`: uint8 array (N, H, W) = round(255 × sigmoid probability), **no min-max normalization**.
+- `logits`: float16 array (N, H, W) = the model's final output **before the sigmoid** (for CASCADE
+  and Polyp-PVT, the sum of their heads' logits), **no min-max normalization** (decided
+  2026-10-30). Until then `probs`: uint8 = round(255 × probability); those chunks still read, as
+  logits saturated at about ±16. Why: uint8 stores every p ≥ 0.998 (logit ≥ 6.2) as 255, and on
+  004-012 the new EMCAD's per-frame peak logit has median 8.3 (max 23), so ~2/3 of polyp-free
+  frames had a false box tied at the top with the polyp's; float16 probabilities only move the
+  ceiling to logit ~8, float32 to ~17. Logit scales differ per model (they rank within a model).
+  Postprocs work on probabilities, so a post-processed npz holds logit(probability), saturated at
+  about ±16 (we run `none` on REAL-Colon). `done.json` records `"values": "logit_f16"`.
   H, W = the **model's own output resolution**: whatever its forward pass returns as the final
   prediction, after the model's own upsampling (learned or fixed) and **before any resizing by us**
   (352×352 for EMCAD and SALI; PNS+ will differ). Not resized to the frame, not downsampled.
@@ -530,6 +539,14 @@ Next:
     hit 0.6 s / 1.8 s after its first box, hit on ~50% of its frames. Minimum area barely
     matters (EMCAD TPR 0.50 → 0.55 at 1% of the map, worse at 2%; SALI flat). In-patient-only
     vs all frames: same here. One lesion only: recheck on all of val with the `-ft-s0` models.
+  - **uint8 baseline saved before the switch to logits (2026-10-30):** `summarize_boxes.py` on
+    004-012 for `emcad-b2@sunseg-ft-s0`, `cmsa-net@sunseg-ft-s0`, `emcad-b2@sunseg-prime`,
+    `sali@sunseg-causal` → `artifacts/reports/realcolon_val/pilot_004-012/uint8_summary.txt`;
+    the two `-ft-s0` uint8 maps, all four box tables and the summary also in
+    `/mnt/dm-3/taishi/pilot_uint8_2026-10-30/`. At FPR 5% (mean score, in-patient): new EMCAD
+    TPR 0.44, CMSA-Net 0.56; peak unusable for all four (67% / 44% of polyp-free frames had a
+    box at 255). Regression check of the logit code on 300 frames (ONNX, CPU): within 1 uint8
+    step of the stored maps, identical boxes on all 300.
   - [ ] **6c, `evaluate_detection.py`:** thresholds (val FPR 5%, fixed 0.5, test-matched),
     long-format results to `artifacts/results/`, both frame scopes.
   - [ ] **6d, cross-check vs `true-colon`** (pilot boxes + latency-exclusion list; needs

@@ -130,11 +130,12 @@ def update_references(st, images, x2_btchw, prob_full, dmr):
 
 
 @torch.no_grad()
-def predict_sequence(model, seq, transform, config, full_res=True):
+def predict_sequence(model, seq, transform, config, full_res=True, return_logits=False):
     """Yield (index, probability map) for every frame of `seq`, in order.
 
     full_res: upsample the logits to the frame size before the sigmoid (for PNG
     predictions and Dice); False keeps CMSA-Net's own output size (352x352).
+    return_logits: yield the logit map instead (before the sigmoid), for npz storage.
     """
     n_adj = config["adjacent_frames"]
     recent = []    # (index, transformed frame on GPU, frame HxW) of the last n_adj frames
@@ -152,7 +153,7 @@ def predict_sequence(model, seq, transform, config, full_res=True):
             lg = logits[pos:pos + 1]
             if full_res:
                 lg = F.interpolate(lg, size=hw, mode="bilinear", align_corners=False)
-            outs.append((idx, lg.sigmoid().squeeze().cpu().numpy()))
+            outs.append((idx, (lg if return_logits else lg.sigmoid()).squeeze().float().cpu().numpy()))
         update_references(st, images, x2, prob, config["dmr"])
         return outs
 

@@ -11,7 +11,8 @@ rounding.
 import numpy as np
 import torch
 
-from polypbench.models.preprocess import preprocess, to_probability
+from polypbench.io.predictions import sigmoid
+from polypbench.models.preprocess import preprocess, to_logits
 from polypbench.train.models import FinalOutput, build_model
 
 
@@ -43,8 +44,11 @@ class TorchPredictor:
         self.model = FinalOutput(model, config["train"]["final_output"]).to(self.device).eval()
 
     @torch.no_grad()
+    def predict_logits(self, rgb):
+        """Return the foreground logit map (float32 SxS): the network's final output, before the sigmoid."""
+        x = torch.from_numpy(preprocess(rgb, self.input_size, self.input_channels, self.mean, self.std))
+        return to_logits(self.model_id, self.model(x.to(self.device)).float().cpu().numpy())
+
     def predict(self, rgb):
         """Return the foreground probability map (float32 SxS, values in [0, 1])."""
-        x = torch.from_numpy(preprocess(rgb, self.input_size, self.input_channels, self.mean, self.std))
-        logits = self.model(x.to(self.device)).float().cpu().numpy()
-        return to_probability(self.model_id, logits)
+        return sigmoid(self.predict_logits(rgb))

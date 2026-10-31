@@ -4,15 +4,16 @@ Inputs are the ground-truth tables (data/realcolon_gt.py) and a predicted-box ta
 (postproc/boxes.py). Everything at any operating threshold tau follows from two
 scores per frame, so a whole curve costs one pass:
 
-  alarm  highest score of any predicted box on the frame (0 if none). A polyp-free
+  alarm  highest score of any predicted box on the frame (-inf if none). A polyp-free
          frame is a false alarm at tau if alarm >= tau.
   hit    highest score of a predicted box overlapping any ground-truth box (IoU > 0,
          i.e. sharing a pixel). A positive frame is a hit at tau if hit >= tau.
 
 and one per (lesion, boxed frame): the highest score of a box overlapping that lesion's
-box, for lesion-level metrics. A box's score is its component's peak or mean
-probability (`score`); boxes smaller than `min_area` (fraction of the map) are
-dropped first. Frames with no score have none: 0, and tau is always > 0.
+box, for lesion-level metrics. A box's score (`score`) is one of the columns written
+by postproc/boxes.py: its component's peak logit, mean logit or mean probability;
+boxes smaller than `min_area` (fraction of the map) are dropped first. Frames with
+no box score -inf, so no tau ever counts them.
 
 Phases, one per frame, derived here so their parameters never touch the ground truth:
   positive       has a ground-truth box
@@ -28,7 +29,8 @@ import numpy as np
 import pandas as pd
 
 PHASES = ["positive", "outside", "inspection", "after_removal", "clean"]
-SCORES = ("peak", "mean")
+SCORES = ("peak", "mean_logit", "mean_prob")
+NO_BOX = -np.inf
 WITHIN_S = (1, 3, 5)
 PERSISTENT_FRAC = 0.5
 
@@ -76,20 +78,20 @@ def score_boxes(pred, gt_boxes, score="peak", min_area=0.0):
     lesion = pairs.groupby(["unique_id", "video", "frame"], as_index=False)["score"].max().rename(
         columns={"score": "hit"})
     hit = lesion.groupby(["video", "frame"], as_index=False)["hit"].max()
-    frames = alarm.merge(hit, on=["video", "frame"], how="left").fillna({"hit": 0.0})
+    frames = alarm.merge(hit, on=["video", "frame"], how="left").fillna({"hit": NO_BOX})
     return frames, lesion
 
 
 def scored_frames(frames, frame_scores):
-    """frame_table rows with alarm / hit columns (0 where no box)."""
+    """frame_table rows with alarm / hit columns (NO_BOX where no box)."""
     out = frames.merge(frame_scores, on=["video", "frame"], how="left")
-    return out.fillna({"alarm": 0.0, "hit": 0.0})
+    return out.fillna({"alarm": NO_BOX, "hit": NO_BOX})
 
 
 def scored_lesion_frames(gt_boxes, lesion_scores):
-    """One row per (lesion, boxed frame) with its hit score (0 where no overlapping box)."""
+    """One row per (lesion, boxed frame) with its hit score (NO_BOX where no overlapping box)."""
     lf = gt_boxes[["unique_id", "video", "frame"]].drop_duplicates()
-    return lf.merge(lesion_scores, on=["unique_id", "video", "frame"], how="left").fillna({"hit": 0.0})
+    return lf.merge(lesion_scores, on=["unique_id", "video", "frame"], how="left").fillna({"hit": NO_BOX})
 
 
 def _rate_at(scores, taus):
@@ -118,11 +120,14 @@ def alarm_rates_by_phase(scored, tau):
 
 
 def threshold_for_fpr(scored, target):
-    """Smallest tau (among the scores that occur) whose frame FPR is <= target; inf if none is."""
+    """Smallest tau (among the scores that occur) whose frame FPR is <= target; just above the
+    highest alarm (FPR 0) if none is."""
     alarms = scored.loc[~scored["positive"], "alarm"].to_numpy()
-    candidates = np.unique(alarms[alarms > 0])
-    if len(candidates) == 0:
-        return float(np.nextafter(0, 1))
+    candidates = np.unique(alarms[np.isfinite(alarms)])
+    if len(candidates) == 0:            # no alarms at all: every box can be shown
+        lowest = scored["alarm"].to_numpy()
+        lowest = lowest[np.isfinite(lowest)]
+        return float(lowest.min()) if len(lowest) else 0.0
     fpr = _rate_at(alarms, candidates)
     ok = np.flatnonzero(fpr <= target)
     if len(ok):

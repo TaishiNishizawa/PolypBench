@@ -31,7 +31,7 @@ def pred():
             (2, 0, 0, 5, 5, 0.8),          # outside the patient
             (80, 0, 0, 5, 5, 0.99)]        # clean, but too small
     p = pd.DataFrame(rows, columns=["frame", "xmin", "ymin", "xmax", "ymax", "peak"]).assign(video="v")
-    return p.assign(mean=p["peak"] - 0.1, area=[0.01] * 5 + [0.0001])
+    return p.assign(mean_prob=p["peak"] - 0.1, mean_logit=p["peak"] * 10, area=[0.01] * 5 + [0.0001])
 
 
 def test_phases(gt):
@@ -61,8 +61,19 @@ def test_frame_rates(gt, pred):
 
 
 def test_mean_score(gt, pred):
-    frames, _ = d.score_boxes(pred, gt.boxes, "mean")
+    frames, _ = d.score_boxes(pred, gt.boxes, "mean_prob")
     assert np.isclose(frames.set_index("frame").loc[22, "hit"], 0.8)
+    frames, _ = d.score_boxes(pred, gt.boxes, "mean_logit")
+    assert np.isclose(frames.set_index("frame").loc[22, "hit"], 9.0)
+
+
+def test_negative_scores(gt, pred):
+    """Logit scores can be <= 0; frames without a box must still never count."""
+    frames, lesion = d.score_boxes(pred.assign(peak=pred["peak"] - 5), gt.boxes, "peak")
+    s = d.scored_frames(d.frame_table(gt, after_removal_s=2), frames)
+    r = d.frame_rates(s, [-4.5], d.scored_lesion_frames(gt.boxes, lesion)).iloc[0]
+    assert r["tpr"] == 1 / 15 and r["fpr"] == 4 / 85   # frames 2, 50, 70, 80; nothing else
+    assert d.threshold_for_fpr(s, 1 / 85) == pytest.approx(0.99 - 5)
 
 
 def test_lesion_metrics(gt, pred):
