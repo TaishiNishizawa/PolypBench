@@ -86,7 +86,7 @@ limitations section names temporal models and more lesions as open; we cover bot
 | Original frames | NAS, read-only (all 60 videos) | ~296 KB/frame; ~285 GB val + test |
 | Local copy of originals (what models read) | `/mnt/dm-3/taishi/realcolon` (val + test frames, all metadata and annotations); `~/data/REAL-Colon` points here | ~285 GB |
 | Frame cache (section 7) | `/mnt/dm-3/taishi/realcolon-cache/L640` (local) | ~140 KB/frame; 134 GB val + test (built) |
-| Predictions (section 8) | `/mnt/dm-3/taishi/polypbench-artifacts/predictions` (local), symlinked as `artifacts/predictions/realcolon_<split>` | uint8 estimate was ≤7-9 GB per run; float16 logits (2026-10-30) larger: **remeasure on 004-012** |
+| Predictions (section 8) | `/mnt/dm-3/taishi/polypbench-artifacts/predictions` (local), symlinked as `artifacts/predictions/realcolon_<split>` | uint8 (default): 0.15-0.5 GB for 004-012 (23.5k frames); float16 logits 3.7-3.9 GB, hence back to uint8 (2026-11-02) |
 | Backup of predictions | NAS `/sld-shared/home/tn23794/polypbench-artifacts` (rsync after each run) | same |
 
 Predictions moved to dm-3 as the main copy on 2026-10-22 (before any were written): same
@@ -369,7 +369,12 @@ artifacts/predictions/<dataset>/<model_id>/<postproc>/   # dataset = realcolon_v
 
 Each `chunk_*.npz` contains:
 - `frames`: int32 array (N,), REAL-Colon frame ids, ascending (0-based, = frame index).
-- `logits`: float16 array (N, H, W) = the model's final output **before the sigmoid** (for CASCADE
+- `probs`: uint8 array (N, H, W) = round(255 × sigmoid probability), **no min-max normalization**.
+  Back to the default on 2026-11-02 (see the logit pilot in step 6): float16 logits took ~8-25×
+  the space and scored the same under the mean-probability rule. `predict*.py --store-logits`
+  still writes the format below; `done.json` records `"values": "prob_u8"` or `"logit_f16"`.
+- With `--store-logits` (the default 2026-10-30 to 11-02) instead
+  `logits`: float16 array (N, H, W) = the model's final output **before the sigmoid** (for CASCADE
   and Polyp-PVT, the sum of their heads' logits), **no min-max normalization** (decided
   2026-10-30). Until then `probs`: uint8 = round(255 × probability); those chunks still read, as
   logits saturated at about ±16. Why: uint8 stores every p ≥ 0.998 (logit ≥ 6.2) as 255, and on
@@ -547,6 +552,15 @@ Next:
     TPR 0.44, CMSA-Net 0.56; peak unusable for all four (67% / 44% of polyp-free frames had a
     box at 255). Regression check of the logit code on 300 frames (ONNX, CPU): within 1 uint8
     step of the stored maps, identical boxes on all 300.
+  - **Logit pilot, and back to uint8 (2026-11-02):** the two `-ft-s0` models re-run on 004-012
+    with float16 logits → `artifacts/reports/realcolon_val/pilot_004-012/logit_summary.txt`.
+    Boxes identical to uint8 (the 0.5 cut sits between uint8 steps). At FPR 5% (in-patient):
+    mean probability TPR 0.441 / 0.562 (EMCAD / CMSA-Net), the same as uint8 (tau within
+    0.0005); peak logit 0.18 / 0.46 and mean logit 0.30 / 0.48 are both worse. False positives
+    are confident in the model, not the encoding. Logits took 3.7-3.9 GB vs 0.15-0.5 GB for
+    uint8, so uint8 is the default again; `--store-logits` remains. Logit maps, their box tables
+    and the summary moved to `/mnt/dm-3/taishi/pilot_logit_2026-10-30/`. Guard: uint8 only
+    loses information if the FPR-5% mean tau nears 1 (one step = 0.004); recheck if it passes ~0.99.
   - [ ] **6c, `evaluate_detection.py`:** thresholds (val FPR 5%, fixed 0.5, test-matched),
     long-format results to `artifacts/results/`, both frame scopes.
   - [ ] **6d, cross-check vs `true-colon`** (pilot boxes + latency-exclusion list; needs

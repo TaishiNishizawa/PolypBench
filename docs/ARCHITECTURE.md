@@ -135,16 +135,16 @@ means touching every stage.
    - **In-house, SUN-SEG:** one PNG per frame, `<frame:06d>.png`, at the
      original frame resolution: the probability as `uint8` (0–255, raw sigmoid).
    - **REAL-Colon** (~1M frames for val + test): `chunk_<k:04d>.npz`, up to
-     2,000 frames each (`frames`: int32 frame ids, `logits`: float16 N×H×W),
+     2,000 frames each (`frames`: int32 frame ids, `probs`: uint8 N×H×W),
      at the **model's own output resolution**: whatever its forward pass
      returns as the final prediction, after the model's own upsampling (learned
      or fixed) and before any resizing by us (352×352 for EMCAD and SALI).
-     **Logits, not probabilities** (since 2026-10-30): exactly what the model's
-     sigmoid is applied to (for CASCADE and Polyp-PVT the sum of their heads).
-     Probabilities tie at the top (uint8 stores everything above p = 0.998 as
-     255; float32 reaches 1.0 near logit 17), and on REAL-Colon most false
-     regions are that confident, so box scores need the logits. Earlier chunks
-     (`probs`: uint8) are still read, as logits saturated at about ±16.
+     The probability is stored as uint8, as for PNGs. `--store-logits`
+     (`values="logit_f16"`) stores float16 logits (`logits`) instead, which
+     keep confident regions apart (uint8 ties every p ≥ 0.998 at 255) but take
+     ~8–25× the space; on the 004-012 pilot they scored the same as uint8 under
+     the mean-probability box score, so uint8 is the default (2026-11-02).
+     `done.json` records which (`"values"`); readers handle both.
      `run.json` records the map size; the evaluator scales to each video's
      frame size. Downsampling to 176 px was measured to lose ~8% of connected
      components (small fragments), which matters for mask→box extraction.

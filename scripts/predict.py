@@ -3,10 +3,11 @@
 Each model runs once per sequence; every requested post-processing variant is
 applied to that same model output and saved separately (see
 polypbench/io/predictions.py for the layout: probability PNGs at frame
-resolution, or npz chunks of logits at model resolution for REAL-Colon).
-Post-processing works on probabilities, so a post-processed npz holds the
-logits of the post-processed probabilities, which saturate at about +-16;
-"none" stores the model's own logits. Runs whose run.json already
+resolution, or npz chunks of uint8 probabilities at model resolution for
+REAL-Colon; --store-logits keeps float16 logits there instead, see
+io/predictions.py). Post-processing works on probabilities, so with
+--store-logits a post-processed npz holds the logits of the post-processed
+probabilities, which saturate at about +-16. Runs whose run.json already
 exists are skipped unless --overwrite is given; for REAL-Colon, finished
 sequences of an interrupted run are skipped too.
 
@@ -46,8 +47,8 @@ def git_commit():
         return "unknown"
 
 
-def run_model(dataset, model_id, postproc_names, overwrite, threads, backend, sequences=None):
-    """sequences: names of the sequences to run (default: all of `dataset`)."""
+def run_model(dataset, model_id, postproc_names, overwrite, threads, backend, sequences=None, values="prob_u8"):
+    """sequences: names of the sequences to run (default: all of `dataset`); values: npz encoding."""
     todo = [p for p in postproc_names if overwrite or not predictions.is_complete(dataset.name, model_id, p)]
     for p in set(postproc_names) - set(todo):
         print(f"[skip] {model_id} / {p}: already complete")
@@ -69,7 +70,7 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads, backend, se
         for name in names:
             if postprocs[name] is not None:
                 postprocs[name].reset()
-        writers = {name: predictions.open_sequence(dataset.name, model_id, name, seq.name) for name in names}
+        writers = {name: predictions.open_sequence(dataset.name, model_id, name, seq.name, values) for name in names}
         for idx, rgb in seq.frames():
             logits = model.predict_logits(rgb)
             prob = predictions.sigmoid(logits)
@@ -98,6 +99,7 @@ def run_model(dataset, model_id, postproc_names, overwrite, threads, backend, se
             "model_config": load_model_config(model_id),
             "postproc_config": load_postproc_config(name),
             "storage": predictions.storage_format(dataset.name),
+            "values": values if npz else "prob_u8",
             "sequences": {seq.name: seq.n_frames for seq in dataset},
             "backend": backend,
             "weights": str(weights_path(load_model_config(model_id), backend).relative_to(ARTIFACTS_ROOT)),
@@ -116,6 +118,8 @@ def main():
     parser.add_argument("--sequences", nargs="+",
                         help="only these sequences (default: all); run.json is written once every sequence is done")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--store-logits", action="store_true",
+                        help="REAL-Colon only: store float16 logits instead of uint8 probabilities (~8-25x the space)")
     parser.add_argument("--backend", choices=BACKENDS, default="pth",
                         help="pth: PyTorch checkpoint best.pth (train env); onnx: exported model.onnx (default pth)")
     parser.add_argument("--threads", type=int, default=4,
@@ -137,7 +141,8 @@ def main():
             hint = "no PyTorch checkpoint; try --backend onnx" if args.backend == "pth" else "not exported?"
             print(f"[skip] {model_id}: no {args.backend} weights{f' at {path}' if path else ''} ({hint})")
             continue
-        run_model(dataset, model_id, args.postprocs, args.overwrite, args.threads, args.backend, args.sequences)
+        run_model(dataset, model_id, args.postprocs, args.overwrite, args.threads, args.backend, args.sequences,
+                  "logit_f16" if args.store_logits else "prob_u8")
 
 
 if __name__ == "__main__":

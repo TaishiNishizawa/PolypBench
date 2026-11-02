@@ -89,9 +89,9 @@ def main():
     work = partial(extract_video, dataset=args.dataset, boxes_name=args.boxes, config=config)
     with Pool(min(args.workers, max(1, len(jobs)))) as pool:
         for (model_id, postproc, video, _), n_frames, n_boxes, values, dt in pool.imap_unordered(work, jobs):
-            old = "  [old uint8 probabilities: scores saturate]" if values != "logit_f16" else ""
+            note = "  [float16 logits]" if values == "logit_f16" else ""
             print(f"[{model_id}/{postproc}] {video}: {n_frames:,} frames, {n_boxes:,} boxes "
-                  f"({n_boxes / n_frames:.2f}/frame) in {dt:.0f}s{old}", flush=True)
+                  f"({n_boxes / n_frames:.2f}/frame) in {dt:.0f}s{note}", flush=True)
 
     for model_id, postproc in runs:
         if not all(boxes_path(args.dataset, model_id, postproc, args.boxes, v).exists() for v in all_videos):

@@ -45,6 +45,8 @@ def main():
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--model_id", default="sali@sunseg")
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--store-logits", action="store_true",
+                        help="REAL-Colon only: store float16 logits instead of uint8 probabilities (~8-25x the space)")
     parser.add_argument("--sequences", nargs="+",
                         help="only these sequences (default: all); run.json is written once every sequence is done")
     args = parser.parse_args()
@@ -61,8 +63,10 @@ def main():
     model = load_sali(config)
     transform = build_transform(config)
 
-    # png: probabilities upsampled to the frame; npz: SALI's own 352x352 logits, before the sigmoid
+    # png: probabilities upsampled to the frame; npz: SALI's own 352x352 logits, before the sigmoid,
+    # which the writer stores as uint8 probabilities (or as float16 logits with --store-logits)
     npz = predictions.storage_format(dataset.name) == "npz"
+    values = "logit_f16" if args.store_logits else "prob_u8"
     started = datetime.now().isoformat(timespec="seconds")
     selected = [dataset[name] for name in args.sequences] if args.sequences else list(dataset)
     for seq in selected:
@@ -70,7 +74,7 @@ def main():
             print(f"[skip] {model_id} {seq.name}: already complete")
             continue
         t0 = time.time()
-        writer = predictions.open_sequence(dataset.name, model_id, POSTPROC, seq.name)
+        writer = predictions.open_sequence(dataset.name, model_id, POSTPROC, seq.name, values)
         for idx, out in predict_sequence(model, seq, transform, config["mem_freq"], config["partner"],
                                          full_res=not npz, return_logits=npz):
             writer.write(idx, out)
@@ -90,6 +94,7 @@ def main():
         "postproc": POSTPROC,
         "model_config": config,
         "storage": predictions.storage_format(dataset.name),
+        "values": values if npz else "prob_u8",
         "sequences": {seq.name: seq.n_frames for seq in dataset},
         "device": torch.cuda.get_device_name(0),
         "torch": torch.__version__,

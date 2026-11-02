@@ -24,8 +24,8 @@ def logit_maps(n, hw=(6, 8), seed=0):
     return np.random.default_rng(seed).normal(0, 10, (n, *hw)).astype(np.float32)
 
 
-def write_npz(logits, close=True):
-    writer = predictions.open_sequence(*NPZ)
+def write_npz(logits, close=True, values="prob_u8"):
+    writer = predictions.open_sequence(*NPZ, values=values)
     for i, lg in enumerate(logits):
         writer.write(i, lg, (1080, 1352))    # frame size is ignored: maps stay at model resolution
     if close:
@@ -39,34 +39,52 @@ def test_storage_format():
     assert predictions.storage_format("sunseg_hard_unseen") == "png"
 
 
-def test_npz_round_trip_across_chunks():
+@pytest.mark.parametrize("values, key, atol", [("prob_u8", "probs", 1 / 255), ("logit_f16", "logits", 1e-3)])
+def test_npz_round_trip_across_chunks(values, key, atol):
     n = 2 * predictions.CHUNK_SIZE + 500
     logits = logit_maps(n)
-    write_npz(logits)
+    write_npz(logits, values=values)
     seq_dir = predictions.sequence_dir(*NPZ)
     assert sorted(p.name for p in seq_dir.glob("chunk_*")) == ["chunk_0000.npz", "chunk_0001.npz", "chunk_0002.npz"]
     assert json.loads((seq_dir / "done.json").read_text()) == {
-        "n_frames": n, "n_chunks": 3, "map_hw": [6, 8], "values": "logit_f16"}
+        "n_frames": n, "n_chunks": 3, "map_hw": [6, 8], "values": values}
     assert predictions.sequence_complete(*NPZ)
+    with np.load(seq_dir / "chunk_0000.npz") as chunk:
+        assert set(chunk.files) == {"frames", key}
 
     stored = np.concatenate([predictions.read_chunk(*NPZ, k)[1] for k in range(3)])
     assert stored.dtype == np.float16
-    np.testing.assert_array_equal(stored, logits.astype(np.float16))
+    if values == "logit_f16":
+        np.testing.assert_array_equal(stored, logits.astype(np.float16))
     read = list(predictions.read_sequence(*NPZ))
     assert [i for i, _ in read] == list(range(n))
-    np.testing.assert_allclose(np.stack([p for _, p in read]), predictions.sigmoid(logits), atol=1e-3)
+    np.testing.assert_allclose(np.stack([p for _, p in read]), predictions.sigmoid(logits), atol=atol)
+
+
+def test_default_npz_matches_png_encoding():
+    """uint8 npz chunks hold the same values a PNG of the probability would."""
+    logits = logit_maps(1)[0]
+    write_npz([logits])
+    with np.load(predictions.sequence_dir(*NPZ) / "chunk_0000.npz") as chunk:
+        np.testing.assert_array_equal(chunk["probs"][0], predictions.to_uint8(predictions.sigmoid(logits)))
 
 
 def test_logits_keep_confident_regions_apart():
-    """Why logits: probabilities this confident all become 255 in uint8 (and 1.0 in float32)."""
+    """What logit_f16 buys: probabilities this confident all become 255 in uint8 (and 1.0 in float32)."""
     logits = np.array([[8.0, 12.0, 20.0, 40.0]], np.float32)
-    assert len(set(predictions.to_uint8(predictions.sigmoid(logits)).ravel())) == 1
     write_npz([logits])
+    assert len(set(predictions.read_chunk(*NPZ, 0)[1].ravel())) == 1
+    write_npz([logits], values="logit_f16")
     assert len(set(predictions.read_chunk(*NPZ, 0)[1].ravel())) == 4
 
 
+def test_unknown_npz_values_rejected():
+    with pytest.raises(ValueError):
+        predictions.open_sequence(*NPZ, values="prob_f16")
+
+
 def test_old_uint8_chunks_still_read():
-    """Chunks written before 2026-10-30 hold uint8 probabilities under "probs" and no "values" in done.json."""
+    """Chunks written before 2026-10-30 hold uint8 probabilities under "probs" but no "values" in done.json."""
     seq_dir = predictions.sequence_dir(*NPZ)
     seq_dir.mkdir(parents=True)
     probs = np.array([[[0, 128, 255]]], np.uint8)

@@ -12,19 +12,22 @@ on the dataset (storage_format):
        original resolution, the foreground probability as uint8 (0-255).
        Read with read_prediction(frame_path(...)).
   npz  (REAL-Colon, ~1M frames): chunk_<k:04d>.npz files of up to CHUNK_SIZE
-       frames ("frames": int32 frame indices, "logits": float16 N x H x W) at
-       the model's own output resolution, not resized to the frame. Logits are
-       what the model's sigmoid is applied to; probabilities would tie at 1.0
-       for confident regions (uint8 above p = 0.998, float32 above logit ~17),
-       which hides how confident a false region is. done.json in the sequence
-       folder marks the sequence complete, so an interrupted run resumes per
-       sequence. Read with read_chunk(...) (logits) or read_sequence(...)
-       (probabilities). Chunks written before 2026-10-30 hold uint8
-       probabilities ("probs"); both readers still read them, as logits that
+       frames ("frames": int32 frame indices, "probs": uint8 N x H x W, the
+       probability as for png) at the model's own output resolution, not
+       resized to the frame. done.json in the sequence folder marks the
+       sequence complete (its "values" says the encoding), so an interrupted
+       run resumes per sequence. Read with read_chunk(...) (logits) or
+       read_sequence(...) (probabilities); uint8 chunks read as logits that
        saturate at about +-16.
+       open_sequence(..., values="logit_f16") stores float16 logits ("logits")
+       instead, which keep confident regions apart (uint8 ties every p >= 0.998
+       at 255) but take ~8-25x the space. Used for the 004-012 pilot
+       (2026-10-30); it scored the same as uint8 under the mean-probability
+       rule, so uint8 is the default again (2026-11-02).
 
 Writers for both: open_sequence(...).write(index, values, frame_hw), then
-close(), where values are probabilities for png and logits for npz.
+close(), where values are probabilities for png and logits for npz (converted
+to uint8 probabilities unless values="logit_f16").
 """
 
 import json
@@ -39,6 +42,7 @@ PREDICTIONS_ROOT = ARTIFACTS_ROOT / "predictions"
 CHUNK_SIZE = 2000
 PROB_EPS = 1e-7                                          # probabilities -> logits: clip to [eps, 1 - eps]
 FLOAT16_MAX = float(np.finfo(np.float16).max)
+NPZ_VALUES = ("prob_u8", "logit_f16")
 
 
 def storage_format(dataset):
@@ -117,10 +121,11 @@ def run_finished(dataset, model_id, postproc, all_sequences, written):
     return set(written) >= set(all_sequences)
 
 
-def open_sequence(dataset, model_id, postproc, sequence):
-    """A writer for one sequence's predictions, in the dataset's storage format."""
+def open_sequence(dataset, model_id, postproc, sequence, values="prob_u8"):
+    """A writer for one sequence's predictions, in the dataset's storage format.
+    values (npz only): "prob_u8" (default) or "logit_f16"."""
     if storage_format(dataset) == "npz":
-        return NpzSequenceWriter(sequence_dir(dataset, model_id, postproc, sequence))
+        return NpzSequenceWriter(sequence_dir(dataset, model_id, postproc, sequence), values)
     return PngSequenceWriter(dataset, model_id, postproc, sequence)
 
 
@@ -142,10 +147,14 @@ class PngSequenceWriter:
 
 
 class NpzSequenceWriter:
-    """Chunks of CHUNK_SIZE frames of float16 logits at the model's output resolution; done.json on close()."""
+    """Chunks of CHUNK_SIZE frames at the model's output resolution, as uint8 probabilities ("prob_u8")
+    or float16 logits ("logit_f16"); done.json on close()."""
 
-    def __init__(self, seq_dir):
+    def __init__(self, seq_dir, values="prob_u8"):
+        if values not in NPZ_VALUES:
+            raise ValueError(f"values must be one of {NPZ_VALUES}, not {values!r}")
         self.dir = seq_dir
+        self.values = values
         self.dir.mkdir(parents=True, exist_ok=True)
         for stale in [*self.dir.glob("chunk_*.npz"), self.dir / "done.json"]:   # from an interrupted run
             stale.unlink(missing_ok=True)
@@ -153,8 +162,8 @@ class NpzSequenceWriter:
         self.map_hw, self.n_frames, self.n_chunks = None, 0, 0
 
     def write(self, index, logits, frame_hw=None):
-        """logits: float HxW, before the sigmoid; saved as float16 (frame_hw is ignored: maps stay at
-        model resolution)."""
+        """logits: float HxW, before the sigmoid; saved as uint8 probabilities or float16 logits
+        (frame_hw is ignored: maps stay at model resolution)."""
         if self.map_hw is None:
             self.map_hw = logits.shape
         elif logits.shape != self.map_hw:
@@ -162,7 +171,10 @@ class NpzSequenceWriter:
         if not np.isfinite(logits).all():
             raise ValueError(f"{self.dir}: frame {index} has non-finite logits")
         self.indices.append(index)
-        self.maps.append(np.clip(logits, -FLOAT16_MAX, FLOAT16_MAX).astype(np.float16))
+        if self.values == "prob_u8":
+            self.maps.append(to_uint8(sigmoid(np.asarray(logits, dtype=np.float32))))
+        else:
+            self.maps.append(np.clip(logits, -FLOAT16_MAX, FLOAT16_MAX).astype(np.float16))
         if len(self.maps) == CHUNK_SIZE:
             self._flush()
 
@@ -170,7 +182,8 @@ class NpzSequenceWriter:
         path = self.dir / f"chunk_{self.n_chunks:04d}.npz"
         tmp = path.with_name(path.name + ".tmp")
         with open(tmp, "wb") as f:   # a file object, so numpy doesn't append ".npz" to the name
-            np.savez_compressed(f, frames=np.array(self.indices, dtype=np.int32), logits=np.stack(self.maps))
+            key = "probs" if self.values == "prob_u8" else "logits"
+            np.savez_compressed(f, frames=np.array(self.indices, dtype=np.int32), **{key: np.stack(self.maps)})
         os.replace(tmp, path)        # a chunk on disk is always whole
         self.n_frames += len(self.maps)
         self.n_chunks += 1
@@ -181,19 +194,19 @@ class NpzSequenceWriter:
             self._flush()
         with open(self.dir / "done.json", "w") as f:
             json.dump({"n_frames": self.n_frames, "n_chunks": self.n_chunks,
-                       "map_hw": list(self.map_hw) if self.map_hw else None, "values": "logit_f16"}, f, indent=2)
+                       "map_hw": list(self.map_hw) if self.map_hw else None, "values": self.values}, f, indent=2)
 
 
 def sequence_info(dataset, model_id, postproc, sequence):
-    """done.json of a complete npz sequence: n_frames, n_chunks, map_hw, values ("logit_f16", or
-    "prob_u8" for sequences written before logits were stored)."""
+    """done.json of a complete npz sequence: n_frames, n_chunks, map_hw, values ("prob_u8" or
+    "logit_f16"; sequences written before 2026-10-30 have no "values" and are "prob_u8")."""
     with open(sequence_dir(dataset, model_id, postproc, sequence) / "done.json") as f:
         return {"values": "prob_u8", **json.load(f)}
 
 
 def read_chunk(dataset, model_id, postproc, sequence, k):
     """(frames int32 N, logits N x H x W) of chunk k of an npz sequence (random access).
-    float16 as stored; old uint8-probability chunks come back as float16 logits saturated at
+    float16 as stored; uint8-probability chunks come back as float16 logits saturated at
     about +-16."""
     with np.load(sequence_dir(dataset, model_id, postproc, sequence) / f"chunk_{k:04d}.npz") as chunk:
         if "logits" in chunk:

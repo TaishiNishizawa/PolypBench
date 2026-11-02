@@ -42,7 +42,7 @@ class FrameViewer:
             if info["n_frames"] != self.n_frames:
                 raise ValueError(f"{model_id}: {info['n_frames']} predicted frames, video has {self.n_frames}")
             self.models.append(model_id)
-            map_bytes = info["map_hw"][0] * info["map_hw"][1] * 2   # float16 logits (old uint8 chunks are read as float16)
+            map_bytes = info["map_hw"][0] * info["map_hw"][1] * 2   # float16 logits, as read_chunk returns them
         self.memory_gb = self.n_frames * map_bytes * len(self.models) / 1e9
         self.keep_all = self.memory_gb <= KEEP_ALL_GB
         self._chunks, self._lock = OrderedDict(), threading.Lock()
