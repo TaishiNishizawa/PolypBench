@@ -33,3 +33,19 @@
 	path = third_party/CMSA-Net
 	url = https://github.com/TaishiNishizawa/CMSA-Net
 	ignore = untracked
+[submodule "third_party/nnUNet"]
+	path = third_party/nnUNet
+	url = https://github.com/TaishiNishizawa/nnUNet
+	ignore = untracked
+[submodule "third_party/SSformer"]
+	path = third_party/SSformer
+	url = https://github.com/TaishiNishizawa/SSformer
+	ignore = untracked
+[submodule "third_party/STDDNet"]
+	path = third_party/STDDNet
+	url = https://github.com/TaishiNishizawa/STDDNet
+	ignore = untracked
+[submodule "third_party/SAM2-UNet"]
+	path = third_party/SAM2-UNet
+	url = https://github.com/TaishiNishizawa/SAM2-UNet
+	ignore = untracked
