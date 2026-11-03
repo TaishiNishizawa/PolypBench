@@ -109,7 +109,10 @@ their only record; recreate them with `ln -sn <target> <link>` on a new machine.
 
 Backup after each REAL-Colon run:
 ```
-rsync -a /mnt/dm-3/taishi/polypbench-artifacts/ /sld-shared/home/tn23794/polypbench-artifacts/
+rsync -rlh --size-only --info=progress2 /mnt/dm-3/taishi/polypbench-artifacts/ /sld-shared/home/tn23794/polypbench-artifacts/
+# Not -a / -t: the NAS (every user is UID 1024) refuses chgrp and setting file times, so rsync
+# ends with code 23 (harmless) and, comparing times, would re-send everything. Chunks are never
+# modified in place, so sizes suffice; verify with: rsync -rlnc --itemize-changes <src> <dst> (empty = identical)
 ```
 - Run long jobs in `tmux`. Do not run two `realcolon_subset.py frames` processes on the same
   `--out` with an old script version (fixed in the current version, but avoid anyway).
@@ -418,6 +421,10 @@ NAS (storage plan, section 3).
   2. **Fixed:** τ = 0.5.
   3. **Comparison only:** τ chosen on test for FPR ≈ 4-5% (as TRUE-Colon did).
 - Full curve over τ (AFROC: lesion-box sensitivity vs fraction of polyp-free frames with an alert).
+- **Two frame scopes, each with its own τ:** `in_patient` (primary; TRUE-Colon trimmed to in-patient
+  ranges, so this is the comparable one) and `all` (REAL-Colon as released, incl. outside the
+  patient). τ for the FPR target is chosen on each scope's own polyp-free frames and applied only
+  to that scope.
 
 **Lesion level**
 - Detected (≥1 hit frame); persistent (hits on ≥50% of visible frames).
@@ -456,7 +463,8 @@ size, histology, latency-exclusion flag.
 | `make_clip.py` | `realcolon/` | Render a video clip with GT boxes (`--anchor onset|end|full`, `--start/--end`, `--speed`) |
 | `build_realcolon_gt.py` | `PolypBench/polypbench/scripts/` | Ground-truth tables (boxes, lesions, videos) for all 60 videos → `artifacts/ground_truth/realcolon/`; read with `load_ground_truth()` |
 | `extract_boxes.py` | `PolypBench/polypbench/scripts/` | REAL-Colon npz maps → boxes (one per connected component, peak + mean score, area), scaled to the original frame → `artifacts/boxes/<dataset>/<model_id>/<postproc>/<boxes>/<video>.csv.gz`; config `configs/boxes/cc-0.5.yaml`. ~250 frames/s per video (npz decode bound), one video per worker |
-| `evaluate_detection.py` | TODO | Boxes → frame / lesion metrics, curves, phase breakdowns (`metrics/detection.py`) |
+| `evaluate_detection.py` | Done (2026-11-02) | Boxes → frame / lesion metrics at mask / val-FPR / test-FPR thresholds, both frame scopes, phases, curves → `artifacts/metrics/<dataset>/.../<boxes>/<score>/`, report in `artifacts/reports/<dataset>/` |
+| `crosscheck_truecolon.py` (+ `truecolon_eval.py`) | Done (2026-11-02) | Our detection metrics vs TRUE-Colon's evaluator on the same boxes; every row must say "ok" |
 | Model runners | TODO | One adapter per model writing section 8 format |
 | `view_predictions.py` | `PolypBench/polypbench/scripts/` | Local frame browser for one REAL-Colon video: per-model prediction overlays + GT boxes, clickable timeline of predicted area, threshold control. Serves `127.0.0.1:8765`; open via VS Code port forwarding |
 
@@ -561,10 +569,34 @@ Next:
     uint8, so uint8 is the default again; `--store-logits` remains. Logit maps, their box tables
     and the summary moved to `/mnt/dm-3/taishi/pilot_logit_2026-10-30/`. Guard: uint8 only
     loses information if the FPR-5% mean tau nears 1 (one step = 0.004); recheck if it passes ~0.99.
-  - [ ] **6c, `evaluate_detection.py`:** thresholds (val FPR 5%, fixed 0.5, test-matched),
-    long-format results to `artifacts/results/`, both frame scopes.
-  - [ ] **6d, cross-check vs `true-colon`** (pilot boxes + latency-exclusion list; needs
-    `pip install true-colon`, ask first).
+  - [x] **6c, `evaluate_detection.py`** (2026-11-02): `metrics.detection.evaluate_boxes` per box
+    table; scopes `all` / `in_patient`; thresholds `mask` (every box = the plain 0.5 mask; "fixed
+    0.5" means this for mean_prob), `val_fpr` (chosen on all of val, saved as `thresholds.json`,
+    read for test), `test_fpr` (test only, comparison). Default score `mean_prob`. Writes
+    summary / lesion / phase / curve CSVs to `artifacts/metrics/<dataset>/<model>/<postproc>/<boxes>/<score>/`
+    (not `artifacts/results/`: matches `evaluate.py`), and one cross-model CSV to
+    `artifacts/reports/<dataset>/detection_<boxes>_<score>.csv`; `--sequences` subsets go to
+    `<dataset>_<videos>` folders. Lesion rows add TRUE-Colon's variants (`tc_*`): 30 fps
+    seconds, "within N s" = ≥ 15 hit frames in the window (ours: first hit within N s, kept as
+    headline), persistence at 25%, their latency exclusions. Checked on the 004-012 pilot (uint8
+    boxes re-extracted with the current columns): identical to `uint8_summary.txt`. Pilot note:
+    at the plain mask, 99% (EMCAD) / 78% (CMSA-Net) of polyp-free frames have a box.
+  - **Latency exclusions differ:** TRUE-Colon's code excludes exactly `003-014_1` and
+    `004-014_1` (`true_colon/_factory.py`); our reading of their rule (`realcolon_gt.latency_excluded`)
+    flags 7 test lesions incl. those two. Val has none. Decide which list the headline mean
+    latency uses before test; both are in `lesion.csv`.
+  - **`true-colon` is not on PyPI** under that name: install from git
+    (`pip install git+https://github.com/sdoerrich97/true-colon@6519e21`, deps numpy + pycocotools)
+    into a separate `truecolon` env (agreed 2026-11-02).
+  - [x] **6d, cross-check vs `true-colon`** (2026-11-02, on the pilot; **rerun on all of val**):
+    `scripts/crosscheck_truecolon.py` (polypbench env) writes GT + boxes as COCO (original pixels,
+    xywh with w = xmax - xmin + 1) next to the boxes, runs `scripts/truecolon_eval.py` in the
+    `truecolon` env (`/mnt/dm-3/taishi/envs/truecolon`, Python 3.11, true-colon 0.1.1 @ 6519e21),
+    and compares frame TP/FP/TN/FN at τ 0.5-0.99, per-lesion visible/hit frames, detected,
+    persistence 25/50%, latency frames, tc within 1/3/5 s, mean latency, and the matched τ.
+    004-012, EMCAD + CMSA-Net, both scopes: **71/71 agree** each. Untested so far: several
+    lesions per video, frames with two lesions, latency exclusions (test only) → rerun when
+    the `-ft-s0` val boxes exist.
 - [ ] Before full runs: decode frames in a background thread in `predict.py` / `predict_sali.py`
   (EMCAD val + test ~12 h at 22 fps from originals; SALI ~35 h on one GPU, ~9 h over 4 by video).
 - [x] Retrain on the full SUN-SEG train set (2026-10-26, user): `emcad-b2@sunseg-ft-s0`,

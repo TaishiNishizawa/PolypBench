@@ -23,6 +23,11 @@ Phases, one per frame, derived here so their parameters never touch the ground t
                  last sighting; removal itself is not annotated)
   clean          every other in-patient frame
 Earlier labels win. Negatives are every frame that is not positive.
+
+Lesion metrics are ours (latency in seconds at each video's fps; "within N s" = first hit
+within N s) plus TRUE-Colon's versions as tc_* columns, for comparison: seconds at a nominal
+30 fps, "within N s" = at least 15 hit frames in the first N s, persistence also at 25%, and
+their two lesions left out of the mean latency (an early annotation gap).
 """
 
 import numpy as np
@@ -33,6 +38,18 @@ SCORES = ("peak", "mean_logit", "mean_prob")
 NO_BOX = -np.inf
 WITHIN_S = (1, 3, 5)
 PERSISTENT_FRAC = 0.5
+TC_FPS = 30.0
+TC_MIN_FRAMES_IN_WINDOW = 15
+TC_PERSISTENT_FRAC = 0.25
+TC_LATENCY_EXCLUSIONS = frozenset({"003-014_1", "004-014_1"})   # true_colon/_factory.py
+
+
+def mask_tau(score, threshold):
+    """The tau at which every box of a mask binarized at `threshold` (a probability) counts:
+    the threshold itself for mean_prob, its logit for the logit scores."""
+    if score not in SCORES:
+        raise ValueError(f"score must be one of {SCORES}, got '{score}'")
+    return float(threshold) if score == "mean_prob" else float(np.log(threshold / (1 - threshold)))
 
 
 def frame_table(gt, after_removal_s, videos=None):
@@ -112,6 +129,18 @@ def frame_rates(scored, taus, lesion_frames=None):
     return out
 
 
+def curve_taus(scored, n=200):
+    """Thresholds for a curve: n quantiles each of the finite negative alarms and positive hits,
+    so the curve is dense where either rate changes."""
+    taus = []
+    for col, rows in (("alarm", ~scored["positive"]), ("hit", scored["positive"])):
+        s = scored.loc[rows, col].to_numpy()
+        s = s[np.isfinite(s)]
+        if len(s):
+            taus.append(np.quantile(s, np.linspace(0, 1, n)))
+    return np.unique(np.concatenate(taus)) if taus else np.array([])
+
+
 def alarm_rates_by_phase(scored, tau):
     """Per phase: n frames and the fraction with an alarm at tau (for 'positive', any box at all)."""
     g = scored.assign(alarm_at=scored["alarm"] >= tau).groupby("phase")
@@ -137,7 +166,8 @@ def threshold_for_fpr(scored, target):
 
 def lesion_metrics(lesion_frames, lesions, videos, tau):
     """One row per lesion at tau: detected, hit fraction of its boxed frames, persistent,
-    frames / seconds from its first boxed frame to its first hit, detected within 1 / 3 / 5 s."""
+    frames / seconds from its first boxed frame to its first hit, detected within 1 / 3 / 5 s;
+    and TRUE-Colon's versions (tc_*, see the module docstring)."""
     lf = lesion_frames.assign(hit_at=lesion_frames["hit"] >= tau)
     g = lf.groupby("unique_id")
     first_hit = lf[lf["hit_at"]].groupby("unique_id")["frame"].min()
@@ -152,4 +182,60 @@ def lesion_metrics(lesion_frames, lesions, videos, tau):
     out["latency_s"] = out["latency_frames"] / out["video"].map(fps)
     for s in WITHIN_S:
         out[f"within_{s}s"] = out["latency_s"] <= s     # NaN (never detected) compares False
+    out["tc_persistent"] = out["hit_frac"] >= TC_PERSISTENT_FRAC
+    out["tc_latency_s"] = out["latency_frames"] / TC_FPS
+    out["tc_latency_excluded"] = out.index.isin(TC_LATENCY_EXCLUSIONS)
+    hits = lf.loc[lf["hit_at"], ["unique_id", "frame"]]
+    since_first = hits["frame"].to_numpy() - out["first_frame"].reindex(hits["unique_id"]).to_numpy()
+    for s in WITHIN_S:
+        n = hits[since_first < int(s * TC_FPS)].groupby("unique_id").size()
+        out[f"tc_within_{s}s"] = n.reindex(out.index).fillna(0) >= TC_MIN_FRAMES_IN_WINDOW
     return out.reset_index().assign(tau=tau)
+
+
+def lesion_summary(m):
+    """One row from lesion_metrics rows (one tau): n lesions; fractions detected / persistent /
+    within N s; mean hit fraction; latency over detected lesions, ours (mean / median seconds,
+    without latency_excluded) and TRUE-Colon's (mean frames, without their two lesions)."""
+    det = m[m["detected"]]
+    ours, tc = det[~det["latency_excluded"]], det[~det["tc_latency_excluded"]]
+    row = {"n_lesions": len(m), "detected": m["detected"].mean(), "persistent": m["persistent"].mean(),
+           "tc_persistent": m["tc_persistent"].mean(), "mean_hit_frac": m["hit_frac"].mean(),
+           "mean_latency_s": ours["latency_s"].mean(), "median_latency_s": ours["latency_s"].median(),
+           "tc_mean_latency_frames": tc["latency_frames"].mean()}
+    for s in WITHIN_S:
+        row[f"within_{s}s"] = m[f"within_{s}s"].mean()
+        row[f"tc_within_{s}s"] = m[f"tc_within_{s}s"].mean()
+    return row
+
+
+def evaluate_boxes(pred, gt, frames, score, min_area, mask_threshold, target_fpr, val_taus=None,
+                   curve_points=200):
+    """Every metric for one box table, in two frame scopes ("all", "in_patient") at up to three
+    thresholds: "mask" (every box: mask_tau), "val_fpr" (val_taus[scope] if given, else chosen
+    here for target_fpr, i.e. in-sample on val) and, when val_taus is given, "test_fpr" (chosen
+    here, for comparison only). Returns a dict of DataFrames: summary (frame rates + lesion
+    summary per scope x threshold), lesion, phase, curve; and "chosen" ({scope: tau for
+    target_fpr on these frames}, to save from val)."""
+    frame_scores, lesion_scores = score_boxes(pred, gt.boxes, score, min_area)
+    scored = scored_frames(frames, frame_scores)
+    lf = scored_lesion_frames(gt.boxes, lesion_scores)
+    summary, lesion, phase, curve, chosen = [], [], [], [], {}
+    for scope, sub in (("all", scored), ("in_patient", scored[scored["in_patient"]])):
+        chosen[scope] = threshold_for_fpr(sub, target_fpr)
+        taus = {"mask": mask_tau(score, mask_threshold)}
+        if val_taus is None:
+            taus["val_fpr"] = chosen[scope]
+        else:
+            taus["val_fpr"], taus["test_fpr"] = val_taus[scope], chosen[scope]
+        for kind, tau in taus.items():
+            keys = {"scope": scope, "threshold": kind}
+            m = lesion_metrics(lf, gt.lesions, gt.videos, tau)
+            rates = frame_rates(sub, [tau], lf).iloc[0].to_dict()
+            summary.append({**keys, **rates, **lesion_summary(m)})
+            lesion.append(m.assign(**keys))
+            phase.append(alarm_rates_by_phase(sub, tau).assign(**keys, tau=tau))
+        curve.append(frame_rates(sub, curve_taus(sub, curve_points), lf).assign(scope=scope))
+    return {"summary": pd.DataFrame(summary), "lesion": pd.concat(lesion, ignore_index=True),
+            "phase": pd.concat(phase, ignore_index=True), "curve": pd.concat(curve, ignore_index=True),
+            "chosen": chosen}

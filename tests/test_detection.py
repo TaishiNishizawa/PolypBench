@@ -84,3 +84,36 @@ def test_lesion_metrics(gt, pred):
     assert m["latency_frames"] == 2 and m["latency_s"] == pytest.approx(0.2) and m["within_1s"]
     missed = d.lesion_metrics(lf, gt.lesions, gt.videos, tau=0.95).iloc[0]
     assert not missed["detected"] and np.isnan(missed["latency_s"]) and not missed["within_5s"]
+
+
+def test_true_colon_lesion_variants(gt):
+    """TRUE-Colon's "within N s" needs 15 hit frames in the first N s at 30 fps; ours, the first hit."""
+    hits = gt.boxes[["video", "frame", "xmin", "ymin", "xmax", "ymax"]].assign(peak=0.9, area=0.01)
+    _, lesion = d.score_boxes(hits, gt.boxes, "peak")
+    lf = d.scored_lesion_frames(gt.boxes, lesion)
+    m = d.lesion_metrics(lf, gt.lesions, gt.videos, tau=0.5).iloc[0]
+    assert m["within_1s"] and m["tc_within_1s"] and m["tc_persistent"] and not m["tc_latency_excluded"]
+    _, lesion = d.score_boxes(hits[hits["frame"] != 39], gt.boxes, "peak")   # 14 hits: one short
+    m = d.lesion_metrics(d.scored_lesion_frames(gt.boxes, lesion), gt.lesions, gt.videos, tau=0.5).iloc[0]
+    assert m["within_1s"] and not m["tc_within_1s"]
+    assert m["tc_latency_s"] == 0 and m["latency_frames"] == 0
+
+
+def test_mask_tau():
+    assert d.mask_tau("mean_prob", 0.5) == 0.5
+    assert d.mask_tau("peak", 0.5) == 0 and d.mask_tau("mean_logit", 0.5) == 0
+
+
+def test_evaluate_boxes(gt, pred):
+    frames = d.frame_table(gt, after_removal_s=2)
+    res = d.evaluate_boxes(pred, gt, frames, "peak", 0.001, 0.5, target_fpr=1 / 85)
+    s = res["summary"].set_index(["scope", "threshold"])
+    assert set(s.index) == {(sc, k) for sc in ("all", "in_patient") for k in ("mask", "val_fpr")}
+    assert s.loc[("all", "mask"), "fpr"] == 3 / 85                      # frames 2, 50, 70
+    assert s.loc[("all", "val_fpr"), "tau"] == 0.8 == res["chosen"]["all"]
+    assert s.loc[("in_patient", "mask"), "fpr"] == 2 / 75 and s.loc[("in_patient", "mask"), "detected"] == 1
+    test = d.evaluate_boxes(pred, gt, frames, "peak", 0.001, 0.5, 1 / 85, val_taus={"all": 0.65, "in_patient": 0.65})
+    t = test["summary"].set_index(["scope", "threshold"])
+    assert t.loc[("all", "val_fpr"), "tau"] == 0.65 and t.loc[("all", "test_fpr"), "tau"] == 0.8
+    assert len(test["lesion"]) == 6 and set(test["phase"]["threshold"]) == {"mask", "val_fpr", "test_fpr"}
+    assert res["curve"].groupby("scope")["fpr"].apply(lambda f: f.is_monotonic_decreasing).all()
